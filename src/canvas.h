@@ -31,7 +31,8 @@ typedef struct {
     Stroke  current;         // stroke being built right now
     bool    is_drawing;
     bool    dirty;           // unsaved changes
-    int     view_x, view_y;  // pan offset (pixels)
+    float   view_x, view_y;  // pan offset (screen pixels)
+    float   zoom;            // scale factor: 1.0 = 100%
 } Canvas;
 
 void canvas_init(Canvas *c);

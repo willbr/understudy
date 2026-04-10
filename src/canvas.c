@@ -60,10 +60,11 @@ void canvas_init(Canvas *c) {
     memset(&c->current, 0, sizeof(c->current));
     c->is_drawing = false;
     c->dirty      = false;
+    c->zoom       = 1.0f;
 
     // Center the document in the display panel on startup
-    c->view_x = -(CANVAS_DOC_W - CANVAS_WIDTH)  / 2;
-    c->view_y = -(CANVAS_DOC_H - CANVAS_HEIGHT) / 2;
+    c->view_x = -(CANVAS_DOC_W - CANVAS_WIDTH)  / 2.0f;
+    c->view_y = -(CANVAS_DOC_H - CANVAS_HEIGHT) / 2.0f;
 }
 
 void canvas_free(Canvas *c) {
@@ -160,8 +161,9 @@ void canvas_clear(Canvas *c) {
     EndTextureMode();
 
     c->dirty  = false;
-    c->view_x = -(CANVAS_DOC_W - CANVAS_WIDTH)  / 2;
-    c->view_y = -(CANVAS_DOC_H - CANVAS_HEIGHT) / 2;
+    c->zoom   = 1.0f;
+    c->view_x = -(CANVAS_DOC_W - CANVAS_WIDTH)  / 2.0f;
+    c->view_y = -(CANVAS_DOC_H - CANVAS_HEIGHT) / 2.0f;
 }
 
 void canvas_load_strokes(Canvas *c, Stroke *strokes, int count) {
@@ -174,8 +176,9 @@ void canvas_load_strokes(Canvas *c, Stroke *strokes, int count) {
     c->stroke_count    = count;
     c->stroke_capacity = count;
     c->dirty           = false;
-    c->view_x          = -(CANVAS_DOC_W - CANVAS_WIDTH)  / 2;
-    c->view_y          = -(CANVAS_DOC_H - CANVAS_HEIGHT) / 2;
+    c->zoom            = 1.0f;
+    c->view_x          = -(CANVAS_DOC_W - CANVAS_WIDTH)  / 2.0f;
+    c->view_y          = -(CANVAS_DOC_H - CANVAS_HEIGHT) / 2.0f;
 
     redraw_all(c);
 }
@@ -193,7 +196,7 @@ void canvas_draw(const Canvas *c) {
 
     // RenderTexture2D is stored flipped — negate source height to correct it
     Rectangle src  = {0, 0, (float)c->width, -(float)c->height};
-    Rectangle dest = {dx, dy, (float)c->width, (float)c->height};
+    Rectangle dest = {dx, dy, c->width * c->zoom, c->height * c->zoom};
     DrawTexturePro(c->rt.texture, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
 
     // Thin border so the document edge is identifiable when panned near it

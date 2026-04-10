@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdio.h>
 #include "raylib.h"
 #include "canvas.h"
@@ -70,14 +71,31 @@ int main(void) {
             // Space = pan mode; otherwise draw
             bool space = IsKeyDown(KEY_SPACE);
 
+            // Scroll wheel → zoom anchored on cursor
+            float wheel = GetMouseWheelMove();
+            Vector2 mouse = GetMousePosition();
+            if (wheel != 0.0f && mouse.x >= CANVAS_X) {
+                float old_zoom = app.canvas.zoom;
+                float new_zoom = old_zoom * powf(1.15f, wheel);
+                if (new_zoom < 0.05f) new_zoom = 0.05f;
+                if (new_zoom > 32.0f) new_zoom = 32.0f;
+
+                // Keep the canvas point under the cursor fixed on screen
+                float cx = (mouse.x - CANVAS_X - app.canvas.view_x) / old_zoom;
+                float cy = (mouse.y - CANVAS_Y - app.canvas.view_y) / old_zoom;
+                app.canvas.view_x = mouse.x - CANVAS_X - cx * new_zoom;
+                app.canvas.view_y = mouse.y - CANVAS_Y - cy * new_zoom;
+                app.canvas.zoom   = new_zoom;
+            }
+
             if (space) {
                 SetMouseCursor(IsMouseButtonDown(MOUSE_BUTTON_LEFT)
                                ? MOUSE_CURSOR_RESIZE_ALL
                                : MOUSE_CURSOR_POINTING_HAND);
                 if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
                     Vector2 delta = GetMouseDelta();
-                    app.canvas.view_x += (int)delta.x;
-                    app.canvas.view_y += (int)delta.y;
+                    app.canvas.view_x += delta.x;
+                    app.canvas.view_y += delta.y;
                 }
                 // Cancel any stroke that was in progress when Space was pressed
                 if (app.canvas.is_drawing)
@@ -86,10 +104,9 @@ int main(void) {
                 SetMouseCursor(MOUSE_CURSOR_DEFAULT);
 
                 // Canvas stroke input (writes to RenderTexture)
-                // Coordinate system: subtract panel origin AND pan offset
-                Vector2 mouse = GetMousePosition();
-                Vector2 cpos  = {mouse.x - CANVAS_X - app.canvas.view_x,
-                                 mouse.y - CANVAS_Y - app.canvas.view_y};
+                // Divide by zoom to convert screen → canvas-local coordinates
+                Vector2 cpos  = {(mouse.x - CANVAS_X - app.canvas.view_x) / app.canvas.zoom,
+                                 (mouse.y - CANVAS_Y - app.canvas.view_y) / app.canvas.zoom};
                 bool on_canvas = (mouse.x >= CANVAS_X &&
                                   cpos.x >= 0 && cpos.x < app.canvas.width &&
                                   cpos.y >= 0 && cpos.y < app.canvas.height);
@@ -118,9 +135,11 @@ int main(void) {
             canvas_draw(&app.canvas);
             toolbar_draw(&app.tools);
 
-            // Draw stroke counter in top-right of toolbar
-            char sc[32];
-            snprintf(sc, sizeof(sc), "%d strokes", app.canvas.stroke_count);
+            // Status line: stroke count + zoom level
+            char sc[64];
+            snprintf(sc, sizeof(sc), "%d strokes  %d%%",
+                     app.canvas.stroke_count,
+                     (int)(app.canvas.zoom * 100.0f + 0.5f));
             DrawText(sc, 10, WIN_H - 20, 12, (Color){100, 100, 100, 255});
 
             if (app.canvas.dirty)
