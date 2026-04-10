@@ -39,6 +39,42 @@ static const char *SCHEMA_SQL =
 
 // ── Open/close ────────────────────────────────────────────────────────────────
 
+// Current schema version. Bump this whenever the schema changes incompatibly.
+#define SCHEMA_VERSION 2
+
+static bool migrate(sqlite3 *db) {
+    // Read the stored version
+    sqlite3_stmt *stmt;
+    int version = 0;
+    if (sqlite3_prepare_v2(db, "PRAGMA user_version;", -1, &stmt, NULL) == SQLITE_OK) {
+        if (sqlite3_step(stmt) == SQLITE_ROW) version = sqlite3_column_int(stmt, 0);
+        sqlite3_finalize(stmt);
+    }
+
+    if (version == SCHEMA_VERSION) return true;
+
+    // Version mismatch — drop old tables and recreate from scratch.
+    // Old pixel_data-based paintings are incompatible; warn and wipe.
+    if (version > 0)
+        fprintf(stderr, "db: schema version %d → %d, rebuilding (old data dropped)\n",
+                version, SCHEMA_VERSION);
+
+    sqlite3_exec(db, "DROP TABLE IF EXISTS strokes;",   NULL, NULL, NULL);
+    sqlite3_exec(db, "DROP TABLE IF EXISTS paintings;", NULL, NULL, NULL);
+
+    char *err = NULL;
+    if (sqlite3_exec(db, SCHEMA_SQL, NULL, NULL, &err) != SQLITE_OK) {
+        fprintf(stderr, "db migrate schema: %s\n", err);
+        sqlite3_free(err);
+        return false;
+    }
+
+    char set_ver[64];
+    snprintf(set_ver, sizeof(set_ver), "PRAGMA user_version = %d;", SCHEMA_VERSION);
+    sqlite3_exec(db, set_ver, NULL, NULL, NULL);
+    return true;
+}
+
 bool db_open(sqlite3 **db) {
     const char *home = getenv("HOME");
     if (!home) return false;
@@ -58,13 +94,7 @@ bool db_open(sqlite3 **db) {
     sqlite3_exec(*db, "PRAGMA journal_mode=WAL;",   NULL, NULL, NULL);
     sqlite3_exec(*db, "PRAGMA synchronous=NORMAL;", NULL, NULL, NULL);
 
-    char *err = NULL;
-    if (sqlite3_exec(*db, SCHEMA_SQL, NULL, NULL, &err) != SQLITE_OK) {
-        fprintf(stderr, "db_open schema: %s\n", err);
-        sqlite3_free(err);
-        return false;
-    }
-    return true;
+    return migrate(*db);
 }
 
 void db_close(sqlite3 *db) {
