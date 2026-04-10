@@ -57,14 +57,10 @@ static void save_dialog_update(UIState *u, Canvas *canvas, sqlite3 *db) {
 
     if (IsKeyPressed(KEY_ENTER) || ui_button(r_ok, "Save")) {
         if (u->text_len > 0) {
-            int size = 0;
-            unsigned char *png = canvas_export_png(canvas, &size);
-            if (png && size > 0) {
-                db_save_painting(db, u->text_input, png, size,
-                                 canvas->width, canvas->height);
-                MemFree(png);
-                canvas->dirty = false;
-            }
+            db_save_painting(db, u->text_input,
+                             canvas->strokes, canvas->stroke_count,
+                             canvas->width, canvas->height);
+            canvas->dirty = false;
             u->mode = UI_NONE;
         }
     }
@@ -137,11 +133,11 @@ static void load_list_update(UIState *u, Canvas *canvas, sqlite3 *db) {
     if (ui_button(r_open, "Open") && u->load_selected >= 0 &&
         u->load_selected < u->load_count) {
         PaintingMeta *m = &u->load_list[u->load_selected];
-        unsigned char *blob = NULL;
-        int blob_size = 0, w = 0, h = 0;
-        if (db_load_painting(db, m->id, &blob, &blob_size, &w, &h)) {
-            canvas_import_png(canvas, blob, blob_size);
-            free(blob);
+        Stroke *strokes = NULL;
+        int count = 0, w = 0, h = 0;
+        if (db_load_painting(db, m->id, &strokes, &count, &w, &h)) {
+            canvas_load_strokes(canvas, strokes, count);
+            // canvas_load_strokes takes ownership; no free needed here
         }
         ui_free(u);
         u->mode = UI_NONE;
@@ -190,7 +186,7 @@ static void load_list_draw(const UIState *u) {
         DrawRectangleLinesEx(row, 1, (Color){70, 70, 70, 255});
 
         char info[160];
-        snprintf(info, sizeof(info), "%s  (%dx%d)  %s", m->name, m->width, m->height, m->created_at);
+        snprintf(info, sizeof(info), "%s  (%d strokes)  %s", m->name, m->stroke_count, m->updated_at);
         DrawText(info, (int)row.x + 6, (int)row.y + 10, 13, WHITE);
     }
 

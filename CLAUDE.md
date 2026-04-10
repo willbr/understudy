@@ -44,23 +44,35 @@ main loop
   ui_draw()          (on top if active)
 ```
 
+### Canvas — vector strokes
+
+The canvas is **vector**: strokes are recorded as arrays of `Vector2` sample points and replayed at render time. The `RenderTexture2D` is an accumulated render cache, updated incrementally as the user draws.
+
+Stroke lifecycle in `main.c`:
+```
+IsMouseButtonPressed → canvas_begin_stroke()
+IsMouseButtonDown    → canvas_add_point()   ← renders segment to RT via BeginTextureMode
+IsMouseButtonReleased→ canvas_end_stroke()  ← commits stroke to strokes[]
+Cmd/Ctrl+Z           → canvas_undo()        ← pops last stroke, replays all remaining
+```
+
+`canvas_add_point` renders one stroke segment incrementally. `canvas_undo` replays all strokes from scratch via `redraw_all()`. `BeginTextureMode` / `EndTextureMode` is called from the update phase, before `BeginDrawing`.
+
 ### Canvas storage (SQLite)
 
-Paintings are stored as raw PNG bytes (`ExportImageToMemory` → `BLOB`).  
+Two tables. Each stroke is one row; points packed as a raw `Vector2` (float[2]) BLOB.  
 DB: `~/Library/Application Support/claude-paint/paintings.db`
 
 ```sql
-paintings(id, name, created_at, updated_at, width, height, pixel_data BLOB)
+paintings(id, name, created_at, updated_at, width, height)
+strokes(id, painting_id→paintings.id CASCADE, stroke_idx, color_r/g/b/a, radius, tool, points BLOB)
 ```
 
 Key rules:
-- Always `sqlite3_bind_blob(..., SQLITE_TRANSIENT)` for BLOBs — never string interpolation.
-- Use `MemFree()` (not `free()`) for raylib-allocated PNG buffers from `ExportImageToMemory`.
-- `UpdateTexture` is called once per `canvas_paint()` call, not once per interpolated stamp.
-
-### Stroke interpolation
-
-`canvas_paint(from, to, color, radius)` lerps between the two positions and stamps `ImageDrawCircle` every `radius/2` pixels to avoid gaps during fast mouse movement. Coordinates are clamped to `[radius, dim-radius]` before drawing to prevent out-of-bounds writes.
+- `PRAGMA foreign_keys = ON` enables cascade delete (removing a painting removes its strokes).
+- Always `sqlite3_bind_blob(..., SQLITE_TRANSIENT)` — SQLite copies before the buffer is freed.
+- `db_free_strokes(strokes, count)` frees the loaded stroke array returned by `db_load_painting`.
+- `canvas_load_strokes` takes ownership of the `Stroke *` array from `db_load_painting`.
 
 ## Dependencies
 

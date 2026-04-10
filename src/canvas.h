@@ -2,28 +2,46 @@
 
 #include <stdbool.h>
 #include "raylib.h"
+#include "tools.h"
 
 #define CANVAS_X      220
 #define CANVAS_Y      0
 #define CANVAS_WIDTH  1060
 #define CANVAS_HEIGHT 800
 
+// One continuous brush stroke (mouse-down → mouse-up).
+// Points are raw mouse samples; rendering interpolates between them.
 typedef struct {
-    Image     image;
-    Texture2D texture;
-    int       width;
-    int       height;
-    bool      dirty;
-    Vector2   last_mouse;
-    bool      is_drawing;
+    Vector2 *points;
+    int      count;
+    int      capacity;
+    Color    color;
+    int      radius;
+    ToolType tool;
+} Stroke;
+
+typedef struct {
+    RenderTexture2D rt;
+    int     width, height;
+    Stroke *strokes;         // committed strokes
+    int     stroke_count;
+    int     stroke_capacity;
+    Stroke  current;         // stroke being built right now
+    bool    is_drawing;
+    bool    dirty;           // unsaved changes
 } Canvas;
 
-void  canvas_init(Canvas *c);
-void  canvas_free(Canvas *c);
-void  canvas_paint(Canvas *c, Vector2 from, Vector2 to, Color color, int radius);
-void  canvas_clear(Canvas *c);
-void  canvas_draw(const Canvas *c);
+void canvas_init(Canvas *c);
+void canvas_free(Canvas *c);
 
-// PNG blob I/O for SQLite storage
-unsigned char *canvas_export_png(Canvas *c, int *out_size);
-bool           canvas_import_png(Canvas *c, const unsigned char *data, int size);
+// Stroke lifecycle — call add_point every frame while mouse is held
+void canvas_begin_stroke(Canvas *c, Color color, int radius, ToolType tool);
+void canvas_add_point(Canvas *c, Vector2 p);   // renders segment to RT
+void canvas_end_stroke(Canvas *c);
+void canvas_undo(Canvas *c);
+void canvas_clear(Canvas *c);
+
+// Load strokes from DB (takes ownership of the array)
+void canvas_load_strokes(Canvas *c, Stroke *strokes, int count);
+
+void canvas_draw(const Canvas *c);

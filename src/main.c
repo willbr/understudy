@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include "raylib.h"
 #include "canvas.h"
 #include "tools.h"
@@ -5,14 +6,14 @@
 #include "ui.h"
 #include "db.h"
 
-#define WIN_W  1280
-#define WIN_H  800
+#define WIN_W      1280
+#define WIN_H      800
 #define TARGET_FPS 60
 
 typedef struct {
-    Canvas   canvas;
+    Canvas    canvas;
     ToolState tools;
-    UIState  ui;
+    UIState   ui;
     sqlite3  *db;
 } AppState;
 
@@ -21,26 +22,24 @@ int main(void) {
 
     InitWindow(WIN_W, WIN_H, "Claude Paint");
     SetTargetFPS(TARGET_FPS);
-    SetExitKey(KEY_NULL); // Don't quit on Escape (we use it in modals)
+    SetExitKey(KEY_NULL); // Escape is used by modals
 
     canvas_init(&app.canvas);
     tools_init(&app.tools);
     ui_init(&app.ui);
 
-    if (!db_open(&app.db)) {
-        // Non-fatal: saving/loading will be unavailable
+    if (!db_open(&app.db))
         TraceLog(LOG_WARNING, "Could not open database — save/load disabled");
-    }
 
     while (!WindowShouldClose()) {
 
-        // ── Input ─────────────────────────────────────────────────────────────
-        if (app.ui.mode != UI_NONE) {
-            // Modal consumes all input
-            ui_update(&app.ui, &app.canvas, app.db);
-        } else {
+        // ── Update ────────────────────────────────────────────────────────────
+        // (BeginTextureMode writes happen here, before BeginDrawing)
+
+        if (app.ui.mode == UI_NONE) {
             ToolbarEvents ev = toolbar_update(&app.tools);
 
+            // Toolbar button actions
             if (ev.wants_new) {
                 if (app.canvas.dirty) {
                     app.ui.mode = UI_CONFIRM_NEW;
@@ -48,50 +47,47 @@ int main(void) {
                     canvas_clear(&app.canvas);
                 }
             }
-            if (ev.wants_save) {
-                if (app.db) {
-                    app.ui.mode     = UI_SAVE_DIALOG;
-                    app.ui.text_len = 0;
-                    app.ui.text_input[0] = '\0';
-                    app.ui.cursor_blink_t = 0.0f;
-                }
+            if (ev.wants_save && app.db) {
+                app.ui.mode           = UI_SAVE_DIALOG;
+                app.ui.text_len       = 0;
+                app.ui.text_input[0]  = '\0';
+                app.ui.cursor_blink_t = 0.0f;
             }
-            if (ev.wants_load) {
-                if (app.db) {
-                    ui_free(&app.ui);
-                    db_list_paintings(app.db, &app.ui.load_list, &app.ui.load_count);
-                    app.ui.load_scroll   = 0;
-                    app.ui.load_selected = app.ui.load_count > 0 ? 0 : -1;
-                    app.ui.mode = UI_LOAD_LIST;
-                }
+            if (ev.wants_load && app.db) {
+                ui_free(&app.ui);
+                db_list_paintings(app.db, &app.ui.load_list, &app.ui.load_count);
+                app.ui.load_scroll   = 0;
+                app.ui.load_selected = app.ui.load_count > 0 ? 0 : -1;
+                app.ui.mode          = UI_LOAD_LIST;
             }
 
-            // Canvas drawing (only when mouse is in canvas area)
+            // Undo: Cmd+Z (macOS) or Ctrl+Z
+            bool mod = IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER) ||
+                       IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+            if (mod && IsKeyPressed(KEY_Z))
+                canvas_undo(&app.canvas);
+
+            // Canvas stroke input (writes to RenderTexture)
             Vector2 mouse = GetMousePosition();
             bool in_canvas = (mouse.x >= CANVAS_X && mouse.x < CANVAS_X + CANVAS_WIDTH &&
                               mouse.y >= CANVAS_Y && mouse.y < CANVAS_Y + CANVAS_HEIGHT);
 
             if (in_canvas) {
-                // Convert to canvas-local coordinates
-                Vector2 canvas_pos = {mouse.x - CANVAS_X, mouse.y - CANVAS_Y};
+                Vector2 cpos = {mouse.x - CANVAS_X, mouse.y - CANVAS_Y};
 
                 if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                    app.canvas.is_drawing = true;
-                    app.canvas.last_mouse = canvas_pos;
-                }
-
-                if (app.canvas.is_drawing && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
                     Color color = tools_get_draw_color(&app.tools);
-                    canvas_paint(&app.canvas,
-                                 app.canvas.last_mouse, canvas_pos,
-                                 color, app.tools.brush_radius);
-                    app.canvas.last_mouse = canvas_pos;
+                    canvas_begin_stroke(&app.canvas, color,
+                                        app.tools.brush_radius,
+                                        app.tools.active_tool);
+                    canvas_add_point(&app.canvas, cpos);
+                } else if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && app.canvas.is_drawing) {
+                    canvas_add_point(&app.canvas, cpos);
                 }
             }
 
-            if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
-                app.canvas.is_drawing = false;
-            }
+            if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+                canvas_end_stroke(&app.canvas);
         }
 
         // ── Draw ──────────────────────────────────────────────────────────────
@@ -101,12 +97,19 @@ int main(void) {
             canvas_draw(&app.canvas);
             toolbar_draw(&app.tools);
 
-            if (app.ui.mode != UI_NONE)
-                ui_draw(&app.ui);
+            // Draw stroke counter in top-right of toolbar
+            char sc[32];
+            snprintf(sc, sizeof(sc), "%d strokes", app.canvas.stroke_count);
+            DrawText(sc, 10, WIN_H - 20, 12, (Color){100, 100, 100, 255});
 
-            // Dirty indicator in title bar
             if (app.canvas.dirty)
                 DrawText("*", WIN_W - 20, 5, 16, YELLOW);
+
+            // Modals: immediate-mode (input + draw combined, inside BeginDrawing)
+            if (app.ui.mode != UI_NONE) {
+                ui_update(&app.ui, &app.canvas, app.db);
+                ui_draw(&app.ui);
+            }
 
         EndDrawing();
     }
@@ -116,6 +119,5 @@ int main(void) {
     canvas_free(&app.canvas);
     if (app.db) db_close(app.db);
     CloseWindow();
-
     return 0;
 }
