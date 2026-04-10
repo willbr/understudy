@@ -32,6 +32,8 @@ int main(void) {
         TraceLog(LOG_WARNING, "Could not open database — save/load disabled");
 
     float minimap_t = 0.0f;  // countdown; minimap visible while > 0
+    bool  was_sizing = false;
+    Vector2 size_anchor = {0}; // mouse position when D was pressed
 
     while (!WindowShouldClose()) {
 
@@ -72,8 +74,13 @@ int main(void) {
             if (mod && IsKeyPressed(KEY_Z))
                 canvas_undo(&app.canvas);
 
-            // Space = pan mode; otherwise draw
+            // Space = pan mode; D = brush size scrub; otherwise draw
             bool space = IsKeyDown(KEY_SPACE);
+            bool sizing = IsKeyDown(KEY_D);
+            if (was_sizing && !sizing) {
+                ShowCursor();
+                was_sizing = false;
+            }
 
             // Scroll wheel → zoom anchored on cursor
             float wheel = GetMouseWheelMove();
@@ -112,6 +119,20 @@ int main(void) {
                     minimap_t = 0.3f;
                 }
                 // Cancel any stroke that was in progress when Space was pressed
+                if (app.canvas.is_drawing)
+                    canvas_end_stroke(&app.canvas);
+            } else if (sizing) {
+                // Lock cursor in place; horizontal movement scrubs brush size
+                if (!was_sizing) {
+                    size_anchor = GetMousePosition();
+                    HideCursor();
+                    was_sizing = true;
+                }
+                float dx = GetMouseDelta().x;
+                SetMousePosition((int)size_anchor.x, (int)size_anchor.y);
+                app.tools.brush_radius += (int)(dx * 0.15f);
+                if (app.tools.brush_radius < 1)  app.tools.brush_radius = 1;
+                if (app.tools.brush_radius > 50) app.tools.brush_radius = 50;
                 if (app.canvas.is_drawing)
                     canvas_end_stroke(&app.canvas);
             } else {
