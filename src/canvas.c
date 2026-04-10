@@ -13,34 +13,51 @@ static void stroke_free_data(Stroke *s) {
     s->capacity = 0;
 }
 
-// Render one stroke into c->rt.  Call between BeginTextureMode/EndTextureMode.
-static void render_stroke(const Stroke *s) {
+// Render one stroke into the current BeginTextureMode target, applying the
+// view transform so circles are drawn at display resolution (not at 1:1 doc
+// resolution that then gets scaled).  All coordinates are in viewport space.
+static void render_stroke_transformed(const Stroke *s,
+                                      float vx, float vy, float zoom) {
     if (s->count == 0) return;
     Color color = (s->tool == TOOL_ERASER) ? WHITE : s->color;
+    float r = fmaxf(1.0f, (float)s->radius * zoom);
 
-    DrawCircle((int)s->points[0].x, (int)s->points[0].y, (float)s->radius, color);
+    // First point
+    float sx0 = s->points[0].x * zoom + vx;
+    float sy0 = s->points[0].y * zoom + vy;
+    DrawCircleV((Vector2){sx0, sy0}, r, color);
 
+    // Interpolate between consecutive samples in screen space
     for (int i = 1; i < s->count; i++) {
-        Vector2 from = s->points[i - 1];
-        Vector2 to   = s->points[i];
-        float dx     = to.x - from.x;
-        float dy     = to.y - from.y;
-        float dist   = sqrtf(dx * dx + dy * dy);
-        float step   = fmaxf(1.0f, (float)s->radius * 0.5f);
-        int   steps  = (int)(dist / step) + 1;
+        float fsx = s->points[i - 1].x * zoom + vx;
+        float fsy = s->points[i - 1].y * zoom + vy;
+        float tsx = s->points[i].x     * zoom + vx;
+        float tsy = s->points[i].y     * zoom + vy;
+        float dx  = tsx - fsx, dy = tsy - fsy;
+        float dist = sqrtf(dx * dx + dy * dy);
+        float step = fmaxf(1.0f, r * 0.5f);
+        int   steps = (int)(dist / step) + 1;
         for (int j = 1; j <= steps; j++) {
             float t = (float)j / (float)steps;
-            DrawCircle((int)(from.x + dx * t), (int)(from.y + dy * t),
-                       (float)s->radius, color);
+            DrawCircleV((Vector2){fsx + dx * t, fsy + dy * t}, r, color);
         }
     }
 }
 
+// Full re-render of all committed strokes at the current view transform.
+// Cheap on typical stroke counts; called on zoom/pan/undo/load.
 static void redraw_all(Canvas *c) {
     BeginTextureMode(c->rt);
     ClearBackground(WHITE);
-    for (int i = 0; i < c->stroke_count; i++) render_stroke(&c->strokes[i]);
+    for (int i = 0; i < c->stroke_count; i++)
+        render_stroke_transformed(&c->strokes[i], c->view_x, c->view_y, c->zoom);
     EndTextureMode();
+}
+
+static void reset_view(Canvas *c) {
+    c->zoom   = 1.0f;
+    c->view_x = -(CANVAS_DOC_W - CANVAS_WIDTH)  / 2.0f;
+    c->view_y = -(CANVAS_DOC_H - CANVAS_HEIGHT) / 2.0f;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -48,23 +65,22 @@ static void redraw_all(Canvas *c) {
 void canvas_init(Canvas *c) {
     c->width  = CANVAS_DOC_W;
     c->height = CANVAS_DOC_H;
-    c->rt     = LoadRenderTexture(c->width, c->height);
+
+    // RT is viewport-sized so strokes are always drawn at display resolution
+    c->rt = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
 
     BeginTextureMode(c->rt);
     ClearBackground(WHITE);
     EndTextureMode();
 
-    c->strokes          = NULL;
-    c->stroke_count     = 0;
-    c->stroke_capacity  = 0;
+    c->strokes         = NULL;
+    c->stroke_count    = 0;
+    c->stroke_capacity = 0;
     memset(&c->current, 0, sizeof(c->current));
     c->is_drawing = false;
     c->dirty      = false;
-    c->zoom       = 1.0f;
 
-    // Center the document in the display panel on startup
-    c->view_x = -(CANVAS_DOC_W - CANVAS_WIDTH)  / 2.0f;
-    c->view_y = -(CANVAS_DOC_H - CANVAS_HEIGHT) / 2.0f;
+    reset_view(c);
 }
 
 void canvas_free(Canvas *c) {
@@ -76,10 +92,10 @@ void canvas_free(Canvas *c) {
 
 void canvas_begin_stroke(Canvas *c, Color color, int radius, ToolType tool) {
     stroke_free_data(&c->current);
-    c->current.color   = color;
-    c->current.radius  = radius;
-    c->current.tool    = tool;
-    c->is_drawing      = true;
+    c->current.color  = color;
+    c->current.radius = radius;
+    c->current.tool   = tool;
+    c->is_drawing     = true;
 }
 
 void canvas_add_point(Canvas *c, Vector2 p) {
@@ -95,21 +111,26 @@ void canvas_add_point(Canvas *c, Vector2 p) {
     }
     s->points[s->count++] = p;
 
-    // Render the new segment incrementally (avoids replaying all strokes)
+    // Render incremental segment at display resolution using current transform
     Color color = (s->tool == TOOL_ERASER) ? WHITE : s->color;
+    float r  = fmaxf(1.0f, (float)s->radius * c->zoom);
+    float sx = p.x * c->zoom + c->view_x;
+    float sy = p.y * c->zoom + c->view_y;
+
     BeginTextureMode(c->rt);
     if (s->count == 1) {
-        DrawCircle((int)p.x, (int)p.y, (float)s->radius, color);
+        DrawCircleV((Vector2){sx, sy}, r, color);
     } else {
-        Vector2 from = s->points[s->count - 2];
-        float dx = p.x - from.x, dy = p.y - from.y;
+        Vector2 prev = s->points[s->count - 2];
+        float fsx = prev.x * c->zoom + c->view_x;
+        float fsy = prev.y * c->zoom + c->view_y;
+        float dx  = sx - fsx, dy = sy - fsy;
         float dist = sqrtf(dx * dx + dy * dy);
-        float step = fmaxf(1.0f, (float)s->radius * 0.5f);
-        int steps  = (int)(dist / step) + 1;
+        float step = fmaxf(1.0f, r * 0.5f);
+        int   steps = (int)(dist / step) + 1;
         for (int j = 1; j <= steps; j++) {
             float t = (float)j / (float)steps;
-            DrawCircle((int)(from.x + dx * t), (int)(from.y + dy * t),
-                       (float)s->radius, color);
+            DrawCircleV((Vector2){fsx + dx * t, fsy + dy * t}, r, color);
         }
     }
     EndTextureMode();
@@ -122,8 +143,6 @@ void canvas_end_stroke(Canvas *c) {
         stroke_free_data(&c->current);
         return;
     }
-
-    // Grow the committed array and transfer ownership from current
     if (c->stroke_count >= c->stroke_capacity) {
         int newcap = c->stroke_capacity == 0 ? 16 : c->stroke_capacity * 2;
         Stroke *tmp = realloc(c->strokes, newcap * sizeof(Stroke));
@@ -138,7 +157,6 @@ void canvas_end_stroke(Canvas *c) {
 
 void canvas_undo(Canvas *c) {
     if (c->is_drawing) {
-        // Cancel in-progress stroke
         stroke_free_data(&c->current);
         c->is_drawing = false;
         redraw_all(c);
@@ -160,10 +178,8 @@ void canvas_clear(Canvas *c) {
     ClearBackground(WHITE);
     EndTextureMode();
 
-    c->dirty  = false;
-    c->zoom   = 1.0f;
-    c->view_x = -(CANVAS_DOC_W - CANVAS_WIDTH)  / 2.0f;
-    c->view_y = -(CANVAS_DOC_H - CANVAS_HEIGHT) / 2.0f;
+    c->dirty = false;
+    reset_view(c);
 }
 
 void canvas_load_strokes(Canvas *c, Stroke *strokes, int count) {
@@ -176,31 +192,31 @@ void canvas_load_strokes(Canvas *c, Stroke *strokes, int count) {
     c->stroke_count    = count;
     c->stroke_capacity = count;
     c->dirty           = false;
-    c->zoom            = 1.0f;
-    c->view_x          = -(CANVAS_DOC_W - CANVAS_WIDTH)  / 2.0f;
-    c->view_y          = -(CANVAS_DOC_H - CANVAS_HEIGHT) / 2.0f;
 
+    reset_view(c);
+    redraw_all(c);
+}
+
+// Called from main whenever zoom or pan changes — re-renders all strokes at
+// the new view transform so they stay crisp at any zoom level.
+void canvas_redraw_for_view(Canvas *c) {
     redraw_all(c);
 }
 
 void canvas_draw(const Canvas *c) {
-    float dx = (float)(CANVAS_X + c->view_x);
-    float dy = (float)(CANVAS_Y + c->view_y);
-
-    // Clip all canvas drawing to the panel area so it never bleeds into the toolbar
-    BeginScissorMode(CANVAS_X, CANVAS_Y, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-    // Drop shadow (only visible near the document edge when panned)
-    DrawRectangle((int)dx + 4, (int)dy + 4, c->width, c->height,
-                  (Color){0, 0, 0, 70});
-
-    // RenderTexture2D is stored flipped — negate source height to correct it
-    Rectangle src  = {0, 0, (float)c->width, -(float)c->height};
-    Rectangle dest = {dx, dy, c->width * c->zoom, c->height * c->zoom};
+    // The RT is viewport-sized with the transform already baked in.
+    // Just draw it at the panel origin (Y-flipped per RenderTexture convention).
+    Rectangle src  = {0, 0, CANVAS_WIDTH, -(float)CANVAS_HEIGHT};
+    Rectangle dest = {CANVAS_X, CANVAS_Y, CANVAS_WIDTH, CANVAS_HEIGHT};
     DrawTexturePro(c->rt.texture, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
 
-    // Thin border so the document edge is identifiable when panned near it
-    DrawRectangleLinesEx(dest, 1, (Color){90, 90, 90, 255});
-
+    // Document boundary — only visible when panned near the edge
+    float bx = CANVAS_X + c->view_x;
+    float by = CANVAS_Y + c->view_y;
+    float bw = (float)c->width  * c->zoom;
+    float bh = (float)c->height * c->zoom;
+    BeginScissorMode(CANVAS_X, CANVAS_Y, CANVAS_WIDTH, CANVAS_HEIGHT);
+    DrawRectangleLinesEx((Rectangle){bx, by, bw, bh}, 1.0f,
+                         (Color){90, 90, 90, 180});
     EndScissorMode();
 }

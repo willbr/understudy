@@ -75,6 +75,10 @@ int main(void) {
             float wheel = GetMouseWheelMove();
             Vector2 mouse = GetMousePosition();
             if (wheel != 0.0f && mouse.x >= CANVAS_X) {
+                // End any active stroke before changing the view transform
+                if (app.canvas.is_drawing)
+                    canvas_end_stroke(&app.canvas);
+
                 float old_zoom = app.canvas.zoom;
                 float new_zoom = old_zoom * powf(1.15f, wheel);
                 if (new_zoom < 0.05f) new_zoom = 0.05f;
@@ -86,6 +90,8 @@ int main(void) {
                 app.canvas.view_x = mouse.x - CANVAS_X - cx * new_zoom;
                 app.canvas.view_y = mouse.y - CANVAS_Y - cy * new_zoom;
                 app.canvas.zoom   = new_zoom;
+
+                canvas_redraw_for_view(&app.canvas);
             }
 
             if (space) {
@@ -96,6 +102,7 @@ int main(void) {
                     Vector2 delta = GetMouseDelta();
                     app.canvas.view_x += delta.x;
                     app.canvas.view_y += delta.y;
+                    canvas_redraw_for_view(&app.canvas);
                 }
                 // Cancel any stroke that was in progress when Space was pressed
                 if (app.canvas.is_drawing)

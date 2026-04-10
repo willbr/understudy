@@ -48,4 +48,7 @@ void canvas_clear(Canvas *c);
 // Load strokes from DB (takes ownership of the array)
 void canvas_load_strokes(Canvas *c, Stroke *strokes, int count);
 
+// Re-render all strokes at the current zoom/pan — call after any view change
+void canvas_redraw_for_view(Canvas *c);
+
 void canvas_draw(const Canvas *c);
