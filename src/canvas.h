@@ -10,6 +10,7 @@
 #define CANVAS_HEIGHT  800    // panel display area
 #define CANVAS_DOC_W   4096   // document / RenderTexture size
 #define CANVAS_DOC_H   4096
+#define MINIMAP_SIZE   160    // minimap thumbnail (square, matches square doc)
 
 // One continuous brush stroke (mouse-down → mouse-up).
 // Points are raw mouse samples; rendering interpolates between them.
@@ -24,6 +25,7 @@ typedef struct {
 
 typedef struct {
     RenderTexture2D rt;
+    RenderTexture2D minimap_rt;  // thumbnail of full document at MINIMAP_SIZE scale
     int     width, height;
     Stroke *strokes;         // committed strokes
     int     stroke_count;
@@ -53,5 +55,8 @@ void canvas_redraw_for_view(Canvas *c);
 
 // Recreate the RT at the new panel dimensions and redraw — call on window resize
 void canvas_resize(Canvas *c, int panel_w, int panel_h);
+
+// Draw the minimap overlay — call inside BeginDrawing; alpha 0..1 for fade
+void canvas_draw_minimap(const Canvas *c, float alpha);
 
 void canvas_draw(const Canvas *c);

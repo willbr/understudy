@@ -31,6 +31,8 @@ int main(void) {
     if (!db_open(&app.db))
         TraceLog(LOG_WARNING, "Could not open database — save/load disabled");
 
+    float minimap_t = 0.0f;  // countdown; minimap visible while > 0
+
     while (!WindowShouldClose()) {
 
         // ── Update ────────────────────────────────────────────────────────────
@@ -94,17 +96,20 @@ int main(void) {
                 app.canvas.zoom   = new_zoom;
 
                 canvas_redraw_for_view(&app.canvas);
+                minimap_t = 2.5f;
             }
 
             if (space) {
                 SetMouseCursor(IsMouseButtonDown(MOUSE_BUTTON_LEFT)
                                ? MOUSE_CURSOR_RESIZE_ALL
                                : MOUSE_CURSOR_POINTING_HAND);
+                minimap_t = 0.3f;  // keep refreshing while space held
                 if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
                     Vector2 delta = GetMouseDelta();
                     app.canvas.view_x += delta.x;
                     app.canvas.view_y += delta.y;
                     canvas_redraw_for_view(&app.canvas);
+                    minimap_t = 0.3f;
                 }
                 // Cancel any stroke that was in progress when Space was pressed
                 if (app.canvas.is_drawing)
@@ -153,6 +158,12 @@ int main(void) {
 
             if (app.canvas.dirty)
                 DrawText("*", GetScreenWidth() - 20, 5, 16, YELLOW);
+
+            // Minimap — fade in on view change, fade out after 2.5 s
+            minimap_t -= GetFrameTime();
+            if (minimap_t < 0.0f) minimap_t = 0.0f;
+            float mm_alpha = minimap_t > 1.0f ? 1.0f : minimap_t;
+            canvas_draw_minimap(&app.canvas, mm_alpha);
 
             // Modals: immediate-mode (input + draw combined, inside BeginDrawing)
             if (app.ui.mode != UI_NONE) {

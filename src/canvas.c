@@ -45,12 +45,22 @@ static void render_stroke_transformed(const Stroke *s,
 }
 
 // Full re-render of all committed strokes at the current view transform.
-// Cheap on typical stroke counts; called on zoom/pan/undo/load.
 static void redraw_all(Canvas *c) {
     BeginTextureMode(c->rt);
     ClearBackground(WHITE);
     for (int i = 0; i < c->stroke_count; i++)
         render_stroke_transformed(&c->strokes[i], c->view_x, c->view_y, c->zoom);
+    EndTextureMode();
+}
+
+// Re-render all strokes to the minimap at doc→minimap scale.
+// Called after any stroke list change (end, undo, clear, load) — not every frame.
+static void update_minimap(Canvas *c) {
+    float ms = (float)MINIMAP_SIZE / (float)CANVAS_DOC_W;
+    BeginTextureMode(c->minimap_rt);
+    ClearBackground(WHITE);
+    for (int i = 0; i < c->stroke_count; i++)
+        render_stroke_transformed(&c->strokes[i], 0.0f, 0.0f, ms);
     EndTextureMode();
 }
 
@@ -70,8 +80,12 @@ void canvas_init(Canvas *c) {
 
     // RT is viewport-sized so strokes are always drawn at display resolution
     c->rt = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
-
     BeginTextureMode(c->rt);
+    ClearBackground(WHITE);
+    EndTextureMode();
+
+    c->minimap_rt = LoadRenderTexture(MINIMAP_SIZE, MINIMAP_SIZE);
+    BeginTextureMode(c->minimap_rt);
     ClearBackground(WHITE);
     EndTextureMode();
 
@@ -86,6 +100,7 @@ void canvas_init(Canvas *c) {
 }
 
 void canvas_free(Canvas *c) {
+    UnloadRenderTexture(c->minimap_rt);
     UnloadRenderTexture(c->rt);
     for (int i = 0; i < c->stroke_count; i++) stroke_free_data(&c->strokes[i]);
     free(c->strokes);
@@ -155,6 +170,7 @@ void canvas_end_stroke(Canvas *c) {
     c->strokes[c->stroke_count++] = c->current;
     memset(&c->current, 0, sizeof(c->current));
     c->is_drawing = false;
+    update_minimap(c);
 }
 
 void canvas_undo(Canvas *c) {
@@ -162,11 +178,13 @@ void canvas_undo(Canvas *c) {
         stroke_free_data(&c->current);
         c->is_drawing = false;
         redraw_all(c);
+        update_minimap(c);
         return;
     }
     if (c->stroke_count == 0) return;
     stroke_free_data(&c->strokes[--c->stroke_count]);
     redraw_all(c);
+    update_minimap(c);
     c->dirty = (c->stroke_count > 0);
 }
 
@@ -177,6 +195,10 @@ void canvas_clear(Canvas *c) {
     c->is_drawing = false;
 
     BeginTextureMode(c->rt);
+    ClearBackground(WHITE);
+    EndTextureMode();
+
+    BeginTextureMode(c->minimap_rt);
     ClearBackground(WHITE);
     EndTextureMode();
 
@@ -197,6 +219,7 @@ void canvas_load_strokes(Canvas *c, Stroke *strokes, int count) {
 
     reset_view(c);
     redraw_all(c);
+    update_minimap(c);
 }
 
 // Called from main whenever zoom or pan changes — re-renders all strokes at
@@ -209,6 +232,41 @@ void canvas_resize(Canvas *c, int panel_w, int panel_h) {
     UnloadRenderTexture(c->rt);
     c->rt = LoadRenderTexture(panel_w, panel_h);
     redraw_all(c);
+}
+
+void canvas_draw_minimap(const Canvas *c, float alpha) {
+    if (alpha <= 0.01f) return;
+
+    int panel_w = c->rt.texture.width;
+    int panel_h = c->rt.texture.height;
+
+    // Bottom-right of canvas panel
+    int mx = CANVAS_X + panel_w - MINIMAP_SIZE - 12;
+    int my = panel_h - MINIMAP_SIZE - 12;
+
+    // Dark background with border
+    DrawRectangle(mx - 2, my - 2, MINIMAP_SIZE + 4, MINIMAP_SIZE + 4,
+                  Fade((Color){15, 15, 15, 210}, alpha));
+    DrawRectangleLines(mx - 2, my - 2, MINIMAP_SIZE + 4, MINIMAP_SIZE + 4,
+                       Fade((Color){80, 80, 80, 255}, alpha));
+
+    // Thumbnail (Y-flipped per RenderTexture convention)
+    Rectangle src  = {0, 0, MINIMAP_SIZE, -(float)MINIMAP_SIZE};
+    Rectangle dest = {(float)mx, (float)my, MINIMAP_SIZE, MINIMAP_SIZE};
+    DrawTexturePro(c->minimap_rt.texture, src, dest,
+                   (Vector2){0, 0}, 0.0f, Fade(WHITE, alpha));
+
+    // Viewport indicator: which portion of the doc is currently visible
+    float ms    = (float)MINIMAP_SIZE / (float)CANVAS_DOC_W;
+    float vp_x  = (-c->view_x / c->zoom) * ms;
+    float vp_y  = (-c->view_y / c->zoom) * ms;
+    float vp_w  = ((float)panel_w / c->zoom) * ms;
+    float vp_h  = ((float)panel_h / c->zoom) * ms;
+
+    Rectangle vp_rect = {mx + vp_x, my + vp_y, vp_w, vp_h};
+    BeginScissorMode(mx, my, MINIMAP_SIZE, MINIMAP_SIZE);
+    DrawRectangleLinesEx(vp_rect, 1.5f, Fade((Color){80, 160, 255, 255}, alpha));
+    EndScissorMode();
 }
 
 void canvas_draw(const Canvas *c) {
