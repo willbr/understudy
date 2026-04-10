@@ -4,10 +4,12 @@
 #include "raylib.h"
 #include "tools.h"
 
-#define CANVAS_X      220
-#define CANVAS_Y      0
-#define CANVAS_WIDTH  1060
-#define CANVAS_HEIGHT 800
+#define CANVAS_X       220
+#define CANVAS_Y       0
+#define CANVAS_WIDTH   1060   // panel display area
+#define CANVAS_HEIGHT  800    // panel display area
+#define CANVAS_DOC_W   4096   // document / RenderTexture size
+#define CANVAS_DOC_H   4096
 
 // One continuous brush stroke (mouse-down → mouse-up).
 // Points are raw mouse samples; rendering interpolates between them.
@@ -29,6 +31,7 @@ typedef struct {
     Stroke  current;         // stroke being built right now
     bool    is_drawing;
     bool    dirty;           // unsaved changes
+    int     view_x, view_y;  // pan offset (pixels)
 } Canvas;
 
 void canvas_init(Canvas *c);

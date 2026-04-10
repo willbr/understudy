@@ -67,27 +67,48 @@ int main(void) {
             if (mod && IsKeyPressed(KEY_Z))
                 canvas_undo(&app.canvas);
 
-            // Canvas stroke input (writes to RenderTexture)
-            Vector2 mouse = GetMousePosition();
-            bool in_canvas = (mouse.x >= CANVAS_X && mouse.x < CANVAS_X + CANVAS_WIDTH &&
-                              mouse.y >= CANVAS_Y && mouse.y < CANVAS_Y + CANVAS_HEIGHT);
+            // Space = pan mode; otherwise draw
+            bool space = IsKeyDown(KEY_SPACE);
 
-            if (in_canvas) {
-                Vector2 cpos = {mouse.x - CANVAS_X, mouse.y - CANVAS_Y};
-
-                if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                    Color color = tools_get_draw_color(&app.tools);
-                    canvas_begin_stroke(&app.canvas, color,
-                                        app.tools.brush_radius,
-                                        app.tools.active_tool);
-                    canvas_add_point(&app.canvas, cpos);
-                } else if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && app.canvas.is_drawing) {
-                    canvas_add_point(&app.canvas, cpos);
+            if (space) {
+                SetMouseCursor(IsMouseButtonDown(MOUSE_BUTTON_LEFT)
+                               ? MOUSE_CURSOR_RESIZE_ALL
+                               : MOUSE_CURSOR_POINTING_HAND);
+                if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+                    Vector2 delta = GetMouseDelta();
+                    app.canvas.view_x += (int)delta.x;
+                    app.canvas.view_y += (int)delta.y;
                 }
-            }
+                // Cancel any stroke that was in progress when Space was pressed
+                if (app.canvas.is_drawing)
+                    canvas_end_stroke(&app.canvas);
+            } else {
+                SetMouseCursor(MOUSE_CURSOR_DEFAULT);
 
-            if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
-                canvas_end_stroke(&app.canvas);
+                // Canvas stroke input (writes to RenderTexture)
+                // Coordinate system: subtract panel origin AND pan offset
+                Vector2 mouse = GetMousePosition();
+                Vector2 cpos  = {mouse.x - CANVAS_X - app.canvas.view_x,
+                                 mouse.y - CANVAS_Y - app.canvas.view_y};
+                bool on_canvas = (mouse.x >= CANVAS_X &&
+                                  cpos.x >= 0 && cpos.x < app.canvas.width &&
+                                  cpos.y >= 0 && cpos.y < app.canvas.height);
+
+                if (on_canvas) {
+                    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        Color color = tools_get_draw_color(&app.tools);
+                        canvas_begin_stroke(&app.canvas, color,
+                                            app.tools.brush_radius,
+                                            app.tools.active_tool);
+                        canvas_add_point(&app.canvas, cpos);
+                    } else if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && app.canvas.is_drawing) {
+                        canvas_add_point(&app.canvas, cpos);
+                    }
+                }
+
+                if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+                    canvas_end_stroke(&app.canvas);
+            }
         }
 
         // ── Draw ──────────────────────────────────────────────────────────────

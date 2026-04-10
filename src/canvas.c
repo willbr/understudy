@@ -46,8 +46,8 @@ static void redraw_all(Canvas *c) {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 void canvas_init(Canvas *c) {
-    c->width  = CANVAS_WIDTH;
-    c->height = CANVAS_HEIGHT;
+    c->width  = CANVAS_DOC_W;
+    c->height = CANVAS_DOC_H;
     c->rt     = LoadRenderTexture(c->width, c->height);
 
     BeginTextureMode(c->rt);
@@ -60,6 +60,10 @@ void canvas_init(Canvas *c) {
     memset(&c->current, 0, sizeof(c->current));
     c->is_drawing = false;
     c->dirty      = false;
+
+    // Center the document in the display panel on startup
+    c->view_x = -(CANVAS_DOC_W - CANVAS_WIDTH)  / 2;
+    c->view_y = -(CANVAS_DOC_H - CANVAS_HEIGHT) / 2;
 }
 
 void canvas_free(Canvas *c) {
@@ -155,7 +159,9 @@ void canvas_clear(Canvas *c) {
     ClearBackground(WHITE);
     EndTextureMode();
 
-    c->dirty = false;
+    c->dirty  = false;
+    c->view_x = -(CANVAS_DOC_W - CANVAS_WIDTH)  / 2;
+    c->view_y = -(CANVAS_DOC_H - CANVAS_HEIGHT) / 2;
 }
 
 void canvas_load_strokes(Canvas *c, Stroke *strokes, int count) {
@@ -168,13 +174,30 @@ void canvas_load_strokes(Canvas *c, Stroke *strokes, int count) {
     c->stroke_count    = count;
     c->stroke_capacity = count;
     c->dirty           = false;
+    c->view_x          = -(CANVAS_DOC_W - CANVAS_WIDTH)  / 2;
+    c->view_y          = -(CANVAS_DOC_H - CANVAS_HEIGHT) / 2;
 
     redraw_all(c);
 }
 
 void canvas_draw(const Canvas *c) {
+    float dx = (float)(CANVAS_X + c->view_x);
+    float dy = (float)(CANVAS_Y + c->view_y);
+
+    // Clip all canvas drawing to the panel area so it never bleeds into the toolbar
+    BeginScissorMode(CANVAS_X, CANVAS_Y, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    // Drop shadow (only visible near the document edge when panned)
+    DrawRectangle((int)dx + 4, (int)dy + 4, c->width, c->height,
+                  (Color){0, 0, 0, 70});
+
     // RenderTexture2D is stored flipped — negate source height to correct it
     Rectangle src  = {0, 0, (float)c->width, -(float)c->height};
-    Rectangle dest = {CANVAS_X, CANVAS_Y, (float)c->width, (float)c->height};
+    Rectangle dest = {dx, dy, (float)c->width, (float)c->height};
     DrawTexturePro(c->rt.texture, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
+
+    // Thin border so the document edge is identifiable when panned near it
+    DrawRectangleLinesEx(dest, 1, (Color){90, 90, 90, 255});
+
+    EndScissorMode();
 }
