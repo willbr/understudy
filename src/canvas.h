@@ -26,6 +26,7 @@ typedef struct {
 typedef struct {
     RenderTexture2D rt;
     RenderTexture2D minimap_rt;  // thumbnail of full document at MINIMAP_SIZE scale
+    Texture2D       paper_tex;   // tileable paper grain texture
     int     width, height;
     Stroke *strokes;         // committed strokes
     int     stroke_count;

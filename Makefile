@@ -15,7 +15,9 @@ all: $(TARGET)
 $(TARGET): $(OBJS)
 	$(CC) $(OBJS) -o $@ $(LDFLAGS)
 
-$(SRCDIR)/%.o: $(SRCDIR)/%.c
+HDRS    = $(wildcard $(SRCDIR)/*.h)
+
+$(SRCDIR)/%.o: $(SRCDIR)/%.c $(HDRS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:

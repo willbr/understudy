@@ -4,6 +4,49 @@
 #include <stdlib.h>
 #include <string.h>
 
+// ── Paper texture ────────────────────────────────────────────────────────────
+
+#define PAPER_TILE 256
+
+static unsigned int paper_hash(int x, int y) {
+    unsigned int h = (unsigned int)(x * 374761393 + y * 668265263);
+    h = (h ^ (h >> 13)) * 1274126177;
+    return h ^ (h >> 16);
+}
+
+static Texture2D gen_paper_texture(void) {
+    Image img = GenImageColor(PAPER_TILE, PAPER_TILE, WHITE);
+    Color *px = (Color *)img.data;
+    for (int y = 0; y < PAPER_TILE; y++) {
+        for (int x = 0; x < PAPER_TILE; x++) {
+            int n1 = (int)(paper_hash(x, y) % 12) - 6;           // fine grain
+            int n2 = (int)(paper_hash(x / 4, y / 4 + 997) % 6) - 3; // coarser
+            int v  = 244 + n1 + n2;
+            if (v < 228) v = 228;
+            if (v > 255) v = 255;
+            // Slightly warm tint (blue channel a touch lower)
+            px[y * PAPER_TILE + x] = (Color){
+                (unsigned char)v,
+                (unsigned char)v,
+                (unsigned char)(v > 3 ? v - 3 : 0),
+                255
+            };
+        }
+    }
+    Texture2D tex = LoadTextureFromImage(img);
+    UnloadImage(img);
+    SetTextureWrap(tex, TEXTURE_WRAP_REPEAT);
+    return tex;
+}
+
+// Draw paper background covering the document area at the given transform.
+static void draw_paper(const Canvas *c, float vx, float vy, float zoom) {
+    Rectangle src  = {0, 0, (float)CANVAS_DOC_W, (float)CANVAS_DOC_H};
+    Rectangle dest = {vx, vy, (float)CANVAS_DOC_W * zoom,
+                               (float)CANVAS_DOC_H * zoom};
+    DrawTexturePro(c->paper_tex, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 static void stroke_free_data(Stroke *s) {
@@ -47,7 +90,8 @@ static void render_stroke_transformed(const Stroke *s,
 // Full re-render of all committed strokes at the current view transform.
 static void redraw_all(Canvas *c) {
     BeginTextureMode(c->rt);
-    ClearBackground(WHITE);
+    ClearBackground((Color){45, 45, 45, 255});   // dark outside document bounds
+    draw_paper(c, c->view_x, c->view_y, c->zoom);
     for (int i = 0; i < c->stroke_count; i++)
         render_stroke_transformed(&c->strokes[i], c->view_x, c->view_y, c->zoom);
     EndTextureMode();
@@ -58,7 +102,8 @@ static void redraw_all(Canvas *c) {
 static void update_minimap(Canvas *c) {
     float ms = (float)MINIMAP_SIZE / (float)CANVAS_DOC_W;
     BeginTextureMode(c->minimap_rt);
-    ClearBackground(WHITE);
+    ClearBackground((Color){45, 45, 45, 255});
+    draw_paper(c, 0.0f, 0.0f, ms);
     for (int i = 0; i < c->stroke_count; i++)
         render_stroke_transformed(&c->strokes[i], 0.0f, 0.0f, ms);
     EndTextureMode();
@@ -78,16 +123,11 @@ void canvas_init(Canvas *c) {
     c->width  = CANVAS_DOC_W;
     c->height = CANVAS_DOC_H;
 
+    c->paper_tex = gen_paper_texture();
+
     // RT is viewport-sized so strokes are always drawn at display resolution
     c->rt = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
-    BeginTextureMode(c->rt);
-    ClearBackground(WHITE);
-    EndTextureMode();
-
     c->minimap_rt = LoadRenderTexture(MINIMAP_SIZE, MINIMAP_SIZE);
-    BeginTextureMode(c->minimap_rt);
-    ClearBackground(WHITE);
-    EndTextureMode();
 
     c->strokes         = NULL;
     c->stroke_count    = 0;
@@ -97,9 +137,12 @@ void canvas_init(Canvas *c) {
     c->dirty      = false;
 
     reset_view(c);
+    redraw_all(c);
+    update_minimap(c);
 }
 
 void canvas_free(Canvas *c) {
+    UnloadTexture(c->paper_tex);
     UnloadRenderTexture(c->minimap_rt);
     UnloadRenderTexture(c->rt);
     for (int i = 0; i < c->stroke_count; i++) stroke_free_data(&c->strokes[i]);
@@ -193,17 +236,11 @@ void canvas_clear(Canvas *c) {
     c->stroke_count = 0;
     stroke_free_data(&c->current);
     c->is_drawing = false;
+    c->dirty      = false;
 
-    BeginTextureMode(c->rt);
-    ClearBackground(WHITE);
-    EndTextureMode();
-
-    BeginTextureMode(c->minimap_rt);
-    ClearBackground(WHITE);
-    EndTextureMode();
-
-    c->dirty = false;
     reset_view(c);
+    redraw_all(c);
+    update_minimap(c);
 }
 
 void canvas_load_strokes(Canvas *c, Stroke *strokes, int count) {
