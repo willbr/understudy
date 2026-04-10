@@ -55,9 +55,11 @@ static void redraw_all(Canvas *c) {
 }
 
 static void reset_view(Canvas *c) {
+    int pw = c->rt.texture.width;
+    int ph = c->rt.texture.height;
     c->zoom   = 1.0f;
-    c->view_x = -(CANVAS_DOC_W - CANVAS_WIDTH)  / 2.0f;
-    c->view_y = -(CANVAS_DOC_H - CANVAS_HEIGHT) / 2.0f;
+    c->view_x = -(CANVAS_DOC_W - pw) / 2.0f;
+    c->view_y = -(CANVAS_DOC_H - ph) / 2.0f;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -203,11 +205,20 @@ void canvas_redraw_for_view(Canvas *c) {
     redraw_all(c);
 }
 
+void canvas_resize(Canvas *c, int panel_w, int panel_h) {
+    UnloadRenderTexture(c->rt);
+    c->rt = LoadRenderTexture(panel_w, panel_h);
+    redraw_all(c);
+}
+
 void canvas_draw(const Canvas *c) {
+    int pw = c->rt.texture.width;
+    int ph = c->rt.texture.height;
+
     // The RT is viewport-sized with the transform already baked in.
-    // Just draw it at the panel origin (Y-flipped per RenderTexture convention).
-    Rectangle src  = {0, 0, CANVAS_WIDTH, -(float)CANVAS_HEIGHT};
-    Rectangle dest = {CANVAS_X, CANVAS_Y, CANVAS_WIDTH, CANVAS_HEIGHT};
+    // Draw it at the panel origin (Y-flipped per RenderTexture convention).
+    Rectangle src  = {0, 0, (float)pw, -(float)ph};
+    Rectangle dest = {CANVAS_X, CANVAS_Y, (float)pw, (float)ph};
     DrawTexturePro(c->rt.texture, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
 
     // Document boundary — only visible when panned near the edge
@@ -215,7 +226,7 @@ void canvas_draw(const Canvas *c) {
     float by = CANVAS_Y + c->view_y;
     float bw = (float)c->width  * c->zoom;
     float bh = (float)c->height * c->zoom;
-    BeginScissorMode(CANVAS_X, CANVAS_Y, CANVAS_WIDTH, CANVAS_HEIGHT);
+    BeginScissorMode(CANVAS_X, CANVAS_Y, pw, ph);
     DrawRectangleLinesEx((Rectangle){bx, by, bw, bh}, 1.0f,
                          (Color){90, 90, 90, 180});
     EndScissorMode();

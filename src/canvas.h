@@ -51,4 +51,7 @@ void canvas_load_strokes(Canvas *c, Stroke *strokes, int count);
 // Re-render all strokes at the current zoom/pan — call after any view change
 void canvas_redraw_for_view(Canvas *c);
 
+// Recreate the RT at the new panel dimensions and redraw — call on window resize
+void canvas_resize(Canvas *c, int panel_w, int panel_h);
+
 void canvas_draw(const Canvas *c);

@@ -5,7 +5,7 @@
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 #define TB_W        220
-#define TB_H        800
+#define TB_H        GetScreenHeight()
 #define TB_PAD       10
 #define TB_INNER    (TB_W - TB_PAD * 2)
 

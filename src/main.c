@@ -7,8 +7,6 @@
 #include "ui.h"
 #include "db.h"
 
-#define WIN_W      1280
-#define WIN_H      800
 #define TARGET_FPS 60
 
 typedef struct {
@@ -21,7 +19,8 @@ typedef struct {
 int main(void) {
     AppState app = {0};
 
-    InitWindow(WIN_W, WIN_H, "Claude Paint");
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+    InitWindow(1280, 800, "Claude Paint");
     SetTargetFPS(TARGET_FPS);
     SetExitKey(KEY_NULL); // Escape is used by modals
 
@@ -35,7 +34,10 @@ int main(void) {
     while (!WindowShouldClose()) {
 
         // ── Update ────────────────────────────────────────────────────────────
-        // (BeginTextureMode writes happen here, before BeginDrawing)
+        if (IsWindowResized())
+            canvas_resize(&app.canvas,
+                          GetScreenWidth() - CANVAS_X,
+                          GetScreenHeight());
 
         if (app.ui.mode == UI_NONE) {
             ToolbarEvents ev = toolbar_update(&app.tools);
@@ -147,10 +149,10 @@ int main(void) {
             snprintf(sc, sizeof(sc), "%d strokes  %d%%",
                      app.canvas.stroke_count,
                      (int)(app.canvas.zoom * 100.0f + 0.5f));
-            DrawText(sc, 10, WIN_H - 20, 12, (Color){100, 100, 100, 255});
+            DrawText(sc, 10, GetScreenHeight() - 20, 12, (Color){100, 100, 100, 255});
 
             if (app.canvas.dirty)
-                DrawText("*", WIN_W - 20, 5, 16, YELLOW);
+                DrawText("*", GetScreenWidth() - 20, 5, 16, YELLOW);
 
             // Modals: immediate-mode (input + draw combined, inside BeginDrawing)
             if (app.ui.mode != UI_NONE) {

@@ -4,8 +4,8 @@
 #include <string.h>
 #include <stdio.h>
 
-#define WIN_W  1280
-#define WIN_H  800
+#define WIN_W  GetScreenWidth()
+#define WIN_H  GetScreenHeight()
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
