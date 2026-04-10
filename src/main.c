@@ -165,6 +165,22 @@ int main(void) {
             float mm_alpha = minimap_t > 1.0f ? 1.0f : minimap_t;
             canvas_draw_minimap(&app.canvas, mm_alpha);
 
+            // Brush cursor — circle showing brush size
+            {
+                Vector2 m = GetMousePosition();
+                bool panning = IsKeyDown(KEY_SPACE);
+                if (app.ui.mode == UI_NONE && !panning && m.x >= CANVAS_X) {
+                    HideCursor();
+                    float r = fmaxf(1.5f, (float)app.tools.brush_radius * app.canvas.zoom);
+                    DrawCircleLines((int)m.x, (int)m.y, r,
+                                    (Color){20, 20, 20, 200});
+                    DrawCircleLines((int)m.x, (int)m.y, r + 1,
+                                    (Color){220, 220, 220, 140});
+                } else {
+                    ShowCursor();
+                }
+            }
+
             // Modals: immediate-mode (input + draw combined, inside BeginDrawing)
             if (app.ui.mode != UI_NONE) {
                 ui_update(&app.ui, &app.canvas, app.db);
