@@ -36,8 +36,9 @@ typedef struct {
 
 typedef struct Canvas {
     RenderTexture2D rt;
-    RenderTexture2D strokes_rt;  // strokes-only render (for ink shader compositing)
-    RenderTexture2D minimap_rt;  // thumbnail of full document at MINIMAP_SIZE scale
+    RenderTexture2D strokes_rt;    // strokes-only render (for ink shader compositing)
+    RenderTexture2D committed_rt;  // cached committed strokes (avoids full re-render per frame)
+    RenderTexture2D minimap_rt;    // thumbnail of full document at MINIMAP_SIZE scale
     Texture2D       paper_tex;   // fallback paper texture (used for minimap)
     Shader          ink_shader;  // composites strokes with procedural paper
     int     width, height;

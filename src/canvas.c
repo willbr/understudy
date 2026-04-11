@@ -1,4 +1,5 @@
 #include "canvas.h"
+#include "rlgl.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -87,7 +88,16 @@ static Vector2 catmull_rom(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, float
 void render_stroke_transformed(const Stroke *s,
                                float vx, float vy, float zoom) {
     if (s->count == 0) return;
-    Color color = (s->tool == TOOL_ERASER) ? WHITE : s->color;
+
+    // Eraser: overwrite with transparent to punch holes (reveals paper)
+    bool eraser = (s->tool == TOOL_ERASER);
+    Color color = eraser ? BLANK : s->color;
+    if (eraser) {
+        rlDrawRenderBatchActive();
+        rlSetBlendFactors(0x1, 0x0, 0x8006); // GL_ONE, GL_ZERO, GL_FUNC_ADD
+        rlSetBlendMode(RL_BLEND_CUSTOM);
+    }
+
     float base_r = fmaxf(1.0f, (float)s->radius * zoom);
 
     // Single point — small dot
@@ -95,7 +105,7 @@ void render_stroke_transformed(const Stroke *s,
         float sx0 = s->points[0].x * zoom + vx;
         float sy0 = s->points[0].y * zoom + vy;
         DrawCircleV((Vector2){sx0, sy0}, base_r * 0.5f, color);
-        return;
+        goto done;
     }
 
     // Line tool: straight line between two points, uniform width
@@ -112,7 +122,7 @@ void render_stroke_transformed(const Stroke *s,
             float t = (float)j / (float)steps;
             DrawCircleV((Vector2){fsx + dx*t, fsy + dy*t}, base_r, color);
         }
-        return;
+        goto done;
     }
 
     // Two points — just a line segment
@@ -130,7 +140,7 @@ void render_stroke_transformed(const Stroke *s,
             float t = (float)j / (float)steps;
             DrawCircleV((Vector2){fsx + dx*t, fsy + dy*t}, r, color);
         }
-        return;
+        goto done;
     }
 
     // 3+ points: Catmull-Rom spline for smooth curves
@@ -171,6 +181,12 @@ void render_stroke_transformed(const Stroke *s,
             DrawCircleV(pt, r, color);
         }
     }
+
+done:
+    if (eraser) {
+        rlDrawRenderBatchActive();
+        rlSetBlendMode(RL_BLEND_ALPHA);
+    }
 }
 
 // Full re-render of all visible layers at the current view transform.
@@ -203,17 +219,54 @@ void composite_ink(Canvas *c) {
     EndTextureMode();
 }
 
-static void redraw_all(Canvas *c) {
-    // Render all committed strokes into strokes_rt
-    BeginTextureMode(c->strokes_rt);
+static void redraw_committed(Canvas *c) {
+    int pw = c->committed_rt.texture.width;
+    int ph = c->committed_rt.texture.height;
+
+    // Clear the final composite
+    BeginTextureMode(c->committed_rt);
     ClearBackground(BLANK);
+    EndTextureMode();
+
+    // Render each layer separately so erasers only affect their own layer
     for (int li = 0; li < c->layer_count; li++) {
         if (!c->layers[li].visible) continue;
         Layer *l = &c->layers[li];
+        if (l->stroke_count == 0) continue;
+
+        // Render this layer's strokes to strokes_rt (used as scratch)
+        BeginTextureMode(c->strokes_rt);
+        ClearBackground(BLANK);
         for (int si = 0; si < l->stroke_count; si++)
             render_stroke_transformed(&l->strokes[si],
                                       c->view_x, c->view_y, c->zoom);
+        EndTextureMode();
+
+        // Composite this layer onto committed_rt with alpha blending
+        // Erased holes (alpha=0) let lower layers show through
+        BeginTextureMode(c->committed_rt);
+        Rectangle src  = {0, 0, (float)pw, -(float)ph};
+        Rectangle dest = {0, 0, (float)pw, (float)ph};
+        DrawTexturePro(c->strokes_rt.texture, src, dest,
+                       (Vector2){0, 0}, 0.0f, WHITE);
+        EndTextureMode();
     }
+}
+
+static void redraw_all(Canvas *c) {
+    int pw = c->strokes_rt.texture.width;
+    int ph = c->strokes_rt.texture.height;
+
+    // Rebuild committed strokes cache (per-layer compositing)
+    redraw_committed(c);
+
+    // Copy committed_rt to strokes_rt for the ink shader
+    BeginTextureMode(c->strokes_rt);
+    ClearBackground(BLANK);
+    Rectangle src  = {0, 0, (float)pw, -(float)ph};
+    Rectangle dest = {0, 0, (float)pw, (float)ph};
+    DrawTexturePro(c->committed_rt.texture, src, dest,
+                   (Vector2){0, 0}, 0.0f, WHITE);
     EndTextureMode();
 
     composite_ink(c);
@@ -259,9 +312,10 @@ void canvas_init(Canvas *c) {
     c->paper_tex = gen_paper_texture();
     c->ink_shader = LoadShader(NULL, "src/ink.fs");
 
-    c->rt         = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
-    c->strokes_rt = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
-    c->minimap_rt = LoadRenderTexture(MINIMAP_SIZE, MINIMAP_SIZE);
+    c->rt           = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
+    c->strokes_rt   = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
+    c->committed_rt = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
+    c->minimap_rt   = LoadRenderTexture(MINIMAP_SIZE, MINIMAP_SIZE);
 
     memset(c->layers, 0, sizeof(c->layers));
     c->layer_count  = 1;
@@ -281,6 +335,7 @@ void canvas_free(Canvas *c) {
     UnloadShader(c->ink_shader);
     UnloadTexture(c->paper_tex);
     UnloadRenderTexture(c->minimap_rt);
+    UnloadRenderTexture(c->committed_rt);
     UnloadRenderTexture(c->strokes_rt);
     UnloadRenderTexture(c->rt);
     for (int i = 0; i < c->layer_count; i++)
@@ -309,19 +364,53 @@ void canvas_add_point(Canvas *c, Vector2 p) {
     }
     s->points[s->count++] = p;
 
-    // Re-render all committed strokes + current stroke with spline
-    BeginTextureMode(c->strokes_rt);
-    ClearBackground(BLANK);
-    for (int li = 0; li < c->layer_count; li++) {
-        if (!c->layers[li].visible) continue;
-        Layer *l = &c->layers[li];
-        for (int si = 0; si < l->stroke_count; si++)
-            render_stroke_transformed(&l->strokes[si],
-                                      c->view_x, c->view_y, c->zoom);
+    int pw = c->strokes_rt.texture.width;
+    int ph = c->strokes_rt.texture.height;
+    Rectangle src  = {0, 0, (float)pw, -(float)ph};
+    Rectangle dest = {0, 0, (float)pw, (float)ph};
+
+    if (s->tool == TOOL_ERASER) {
+        // Eraser needs per-layer compositing so it only erases the active layer
+        // Render all layers, inserting the current eraser into the active layer
+        BeginTextureMode(c->committed_rt);
+        ClearBackground(BLANK);
+        EndTextureMode();
+
+        for (int li = 0; li < c->layer_count; li++) {
+            if (!c->layers[li].visible) continue;
+            Layer *l = &c->layers[li];
+
+            BeginTextureMode(c->strokes_rt);
+            ClearBackground(BLANK);
+            for (int si = 0; si < l->stroke_count; si++)
+                render_stroke_transformed(&l->strokes[si],
+                                          c->view_x, c->view_y, c->zoom);
+            // Add current eraser stroke to active layer
+            if (li == c->active_layer)
+                render_stroke_transformed(s, c->view_x, c->view_y, c->zoom);
+            EndTextureMode();
+
+            BeginTextureMode(c->committed_rt);
+            DrawTexturePro(c->strokes_rt.texture, src, dest,
+                           (Vector2){0, 0}, 0.0f, WHITE);
+            EndTextureMode();
+        }
+
+        // Copy result to strokes_rt for ink shader
+        BeginTextureMode(c->strokes_rt);
+        ClearBackground(BLANK);
+        DrawTexturePro(c->committed_rt.texture, src, dest,
+                       (Vector2){0, 0}, 0.0f, WHITE);
+        EndTextureMode();
+    } else {
+        // Brush/Line: fast path — copy committed cache, draw current stroke on top
+        BeginTextureMode(c->strokes_rt);
+        ClearBackground(BLANK);
+        DrawTexturePro(c->committed_rt.texture, src, dest,
+                       (Vector2){0, 0}, 0.0f, WHITE);
+        render_stroke_transformed(s, c->view_x, c->view_y, c->zoom);
+        EndTextureMode();
     }
-    // Render current in-progress stroke with same spline logic
-    render_stroke_transformed(s, c->view_x, c->view_y, c->zoom);
-    EndTextureMode();
 
     composite_ink(c);
     c->dirty = true;
@@ -529,8 +618,10 @@ void canvas_redraw_for_view(Canvas *c) {
 void canvas_resize(Canvas *c, int panel_w, int panel_h) {
     UnloadRenderTexture(c->rt);
     UnloadRenderTexture(c->strokes_rt);
-    c->rt         = LoadRenderTexture(panel_w, panel_h);
-    c->strokes_rt = LoadRenderTexture(panel_w, panel_h);
+    UnloadRenderTexture(c->committed_rt);
+    c->rt           = LoadRenderTexture(panel_w, panel_h);
+    c->strokes_rt   = LoadRenderTexture(panel_w, panel_h);
+    c->committed_rt = LoadRenderTexture(panel_w, panel_h);
     redraw_all(c);
 }
 

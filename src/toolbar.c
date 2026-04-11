@@ -1,6 +1,7 @@
 #include "toolbar.h"
 #include "canvas.h"
 #include "font.h"
+#include "rlgl.h"
 
 #include <stdio.h>
 
@@ -76,12 +77,19 @@ static bool small_button(Rectangle r, const char *label) {
     return hovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 }
 
+// ── Scroll state ─────────────────────────────────────────────────────────────
+static int tb_scroll = 0;
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 void toolbar_draw(const ToolState *t, const Canvas *c) {
     // Background
     DrawRectangle(0, 0, TB_W, TB_H, (Color){40, 40, 40, 255});
     DrawLine(TB_W, 0, TB_W, TB_H, (Color){70, 70, 70, 255});
+
+    BeginScissorMode(0, 0, TB_W, TB_H);
+    rlPushMatrix();
+    rlTranslatef(0, -(float)tb_scroll, 0);
 
     // Title
     DrawUI("Claude Paint", TB_PAD, Y_TITLE, 16, RAYWHITE);
@@ -211,6 +219,9 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
     small_button((Rectangle){TB_PAD + bw + 4,    by, bw, 20}, "-");
     small_button((Rectangle){TB_PAD + 2*(bw+4),  by, bw, 20}, "^");
     small_button((Rectangle){TB_PAD + 3*(bw+4),  by, bw, 20}, "v");
+
+    rlPopMatrix();
+    EndScissorMode();
 }
 
 ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
@@ -220,6 +231,19 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
     bool lpress   = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 
     if (mouse.x > TB_W) return ev;
+
+    // Scroll toolbar with mouse wheel
+    float wheel = GetMouseWheelMove();
+    if (wheel != 0.0f) {
+        tb_scroll -= (int)(wheel * 30);
+        if (tb_scroll < 0) tb_scroll = 0;
+        int max_scroll = Y_LAYER_BTNS + 30 - GetScreenHeight();
+        if (max_scroll < 0) max_scroll = 0;
+        if (tb_scroll > max_scroll) tb_scroll = max_scroll;
+    }
+
+    // Offset mouse Y for hit testing against scrolled content
+    mouse.y += tb_scroll;
 
     // Tool buttons
     Rectangle r_brush  = {TB_PAD,       Y_TOOLS, 60, 30};
