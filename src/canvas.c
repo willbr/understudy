@@ -309,13 +309,13 @@ void canvas_resize(Canvas *c, int panel_w, int panel_h) {
     redraw_all(c);
 }
 
-void canvas_draw_minimap(const Canvas *c, float alpha) {
+void canvas_draw_minimap(const Canvas *c, float alpha, int x_offset) {
     if (alpha <= 0.01f) return;
 
     int panel_w = c->rt.texture.width;
     int panel_h = c->rt.texture.height;
 
-    int mx = CANVAS_X + panel_w - MINIMAP_SIZE - 12;
+    int mx = x_offset + panel_w - MINIMAP_SIZE - 12;
     int my = panel_h - MINIMAP_SIZE - 12;
 
     DrawRectangle(mx - 2, my - 2, MINIMAP_SIZE + 4, MINIMAP_SIZE + 4,
@@ -340,19 +340,19 @@ void canvas_draw_minimap(const Canvas *c, float alpha) {
     EndScissorMode();
 }
 
-void canvas_draw(const Canvas *c) {
+void canvas_draw(const Canvas *c, int x_offset) {
     int pw = c->rt.texture.width;
     int ph = c->rt.texture.height;
 
     Rectangle src  = {0, 0, (float)pw, -(float)ph};
-    Rectangle dest = {CANVAS_X, CANVAS_Y, (float)pw, (float)ph};
+    Rectangle dest = {(float)x_offset, CANVAS_Y, (float)pw, (float)ph};
     DrawTexturePro(c->rt.texture, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
 
-    float bx = CANVAS_X + c->view_x;
+    float bx = (float)x_offset + c->view_x;
     float by = CANVAS_Y + c->view_y;
     float bw = (float)c->width  * c->zoom;
     float bh = (float)c->height * c->zoom;
-    BeginScissorMode(CANVAS_X, CANVAS_Y, pw, ph);
+    BeginScissorMode(x_offset, CANVAS_Y, pw, ph);
     DrawRectangleLinesEx((Rectangle){bx, by, bw, bh}, 1.0f,
                          (Color){90, 90, 90, 180});
     EndScissorMode();

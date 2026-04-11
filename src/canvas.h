@@ -71,9 +71,9 @@ void canvas_redraw_for_view(Canvas *c);
 void canvas_resize(Canvas *c, int panel_w, int panel_h);
 
 // Draw the minimap overlay — call inside BeginDrawing; alpha 0..1 for fade
-void canvas_draw_minimap(const Canvas *c, float alpha);
+void canvas_draw_minimap(const Canvas *c, float alpha, int x_offset);
 
-void canvas_draw(const Canvas *c);
+void canvas_draw(const Canvas *c, int x_offset);
 
 // Layer management
 int  canvas_add_layer(Canvas *c);                          // returns index or -1

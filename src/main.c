@@ -40,17 +40,28 @@ int main(void) {
     float minimap_t = 0.0f;  // countdown; minimap visible while > 0
     bool  was_sizing = false;
     Vector2 size_anchor = {0}; // mouse position when D was pressed
+    bool  toolbar_hidden = false;
 
     while (!WindowShouldClose()) {
 
         // ── Update ────────────────────────────────────────────────────────────
+        if (IsKeyPressed(KEY_TAB) && app.ui.mode == UI_NONE) {
+            toolbar_hidden = !toolbar_hidden;
+            int cx = toolbar_hidden ? 0 : CANVAS_X;
+            canvas_resize(&app.canvas, GetScreenWidth() - cx, GetScreenHeight());
+        }
+
+        int canvas_x = toolbar_hidden ? 0 : CANVAS_X;
+
         if (IsWindowResized())
             canvas_resize(&app.canvas,
-                          GetScreenWidth() - CANVAS_X,
+                          GetScreenWidth() - canvas_x,
                           GetScreenHeight());
 
         if (app.ui.mode == UI_NONE) {
-            ToolbarEvents ev = toolbar_update(&app.tools, &app.canvas);
+            ToolbarEvents ev = {0};
+            if (!toolbar_hidden)
+                ev = toolbar_update(&app.tools, &app.canvas);
 
             // Toolbar button actions
             if (ev.wants_new) {
@@ -91,7 +102,7 @@ int main(void) {
             // Scroll wheel → zoom anchored on cursor
             float wheel = GetMouseWheelMove();
             Vector2 mouse = GetMousePosition();
-            if (wheel != 0.0f && mouse.x >= CANVAS_X) {
+            if (wheel != 0.0f && mouse.x >= canvas_x) {
                 // End any active stroke before changing the view transform
                 if (app.canvas.is_drawing)
                     canvas_end_stroke(&app.canvas);
@@ -102,9 +113,9 @@ int main(void) {
                 if (new_zoom > 32.0f) new_zoom = 32.0f;
 
                 // Keep the canvas point under the cursor fixed on screen
-                float cx = (mouse.x - CANVAS_X - app.canvas.view_x) / old_zoom;
+                float cx = (mouse.x - canvas_x - app.canvas.view_x) / old_zoom;
                 float cy = (mouse.y - CANVAS_Y - app.canvas.view_y) / old_zoom;
-                app.canvas.view_x = mouse.x - CANVAS_X - cx * new_zoom;
+                app.canvas.view_x = mouse.x - canvas_x - cx * new_zoom;
                 app.canvas.view_y = mouse.y - CANVAS_Y - cy * new_zoom;
                 app.canvas.zoom   = new_zoom;
 
@@ -146,9 +157,9 @@ int main(void) {
 
                 // Canvas stroke input (writes to RenderTexture)
                 // Divide by zoom to convert screen → canvas-local coordinates
-                Vector2 cpos  = {(mouse.x - CANVAS_X - app.canvas.view_x) / app.canvas.zoom,
+                Vector2 cpos  = {(mouse.x - canvas_x - app.canvas.view_x) / app.canvas.zoom,
                                  (mouse.y - CANVAS_Y - app.canvas.view_y) / app.canvas.zoom};
-                bool on_canvas = (mouse.x >= CANVAS_X &&
+                bool on_canvas = (mouse.x >= canvas_x &&
                                   cpos.x >= 0 && cpos.x < app.canvas.width &&
                                   cpos.y >= 0 && cpos.y < app.canvas.height);
 
@@ -173,8 +184,26 @@ int main(void) {
         BeginDrawing();
             ClearBackground((Color){25, 25, 25, 255});
 
-            canvas_draw(&app.canvas);
-            toolbar_draw(&app.tools, &app.canvas);
+            canvas_draw(&app.canvas, canvas_x);
+            if (!toolbar_hidden)
+                toolbar_draw(&app.tools, &app.canvas);
+
+            // Collapse/expand toggle button
+            {
+                const char *icon = toolbar_hidden ? ">" : "<";
+                int bx = toolbar_hidden ? 4 : CANVAS_X - 18;
+                Rectangle tog = {(float)bx, 4, 16, 24};
+                bool hovered = CheckCollisionPointRec(GetMousePosition(), tog);
+                DrawRectangleRec(tog, hovered ? (Color){70, 70, 70, 255}
+                                              : (Color){50, 50, 50, 255});
+                DrawUI(icon, bx + 4, 8, 14, (Color){180, 180, 180, 255});
+                if (hovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    toolbar_hidden = !toolbar_hidden;
+                    canvas_x = toolbar_hidden ? 0 : CANVAS_X;
+                    canvas_resize(&app.canvas, GetScreenWidth() - canvas_x,
+                                  GetScreenHeight());
+                }
+            }
 
             // Status line: layer + zoom
             char sc[96];
@@ -192,7 +221,7 @@ int main(void) {
             minimap_t -= GetFrameTime();
             if (minimap_t < 0.0f) minimap_t = 0.0f;
             float mm_alpha = minimap_t > 1.0f ? 1.0f : minimap_t;
-            canvas_draw_minimap(&app.canvas, mm_alpha);
+            canvas_draw_minimap(&app.canvas, mm_alpha, canvas_x);
 
             // Brush cursor — circle showing brush size
             {
@@ -217,7 +246,7 @@ int main(void) {
                     DrawRectangle(tx - 3, ty - 2, tw + 6, 20,
                                   (Color){30, 30, 30, 200});
                     DrawUI(sz, tx, ty, 16, WHITE);
-                } else if (app.ui.mode == UI_NONE && !panning && m.x >= CANVAS_X) {
+                } else if (app.ui.mode == UI_NONE && !panning && m.x >= canvas_x) {
                     HideCursor();
                     float r = fmaxf(1.5f, (float)app.tools.brush_radius * app.canvas.zoom);
                     // Dark outline + white inline for contrast on any background
