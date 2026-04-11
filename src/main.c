@@ -151,10 +151,11 @@ int main(void) {
                 color_picker_open = false;
             }
 
-            // Space = pan mode; D = brush size scrub; V = zoom scrub; otherwise draw
+            // Space = pan mode; D = brush size scrub; V = zoom scrub; E = eyedropper
             bool space = IsKeyDown(KEY_SPACE);
             bool sizing = IsKeyDown(KEY_D);
             bool zooming = IsKeyDown(KEY_V);
+            bool eyedropper = IsKeyDown(KEY_E);
             if (was_sizing && !sizing) {
                 ShowCursor();
                 was_sizing = false;
@@ -242,6 +243,25 @@ int main(void) {
 
                     canvas_redraw_for_view(&app.canvas);
                     minimap_t = 2.5f;
+                }
+                if (app.canvas.is_drawing)
+                    canvas_end_stroke(&app.canvas);
+            } else if (eyedropper) {
+                SetMouseCursor(MOUSE_CURSOR_CROSSHAIR);
+                if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && mouse.x >= canvas_x) {
+                    // Sample color from the rendered RT at the mouse position
+                    int px = (int)(mouse.x - canvas_x);
+                    int py = (int)(mouse.y - CANVAS_Y);
+                    Image img = LoadImageFromTexture(app.canvas.rt.texture);
+                    ImageFlipVertical(&img);  // RT is Y-flipped
+                    if (px >= 0 && px < img.width && py >= 0 && py < img.height) {
+                        Color picked = GetImageColor(img, px, py);
+                        if (picked.a > 0) {
+                            app.tools.draw_color = picked;
+                            app.tools.active_tool = TOOL_BRUSH;
+                        }
+                    }
+                    UnloadImage(img);
                 }
                 if (app.canvas.is_drawing)
                     canvas_end_stroke(&app.canvas);
