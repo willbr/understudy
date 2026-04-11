@@ -198,6 +198,23 @@ fail:
     return -1;
 }
 
+// ── Autosave ─────────────────────────────────────────────────────────────────
+
+void db_autosave(sqlite3 *db, int *autosave_id,
+                 const Layer *layers, int layer_count,
+                 int width, int height) {
+    // Delete previous autosave for THIS canvas session
+    if (*autosave_id > 0) {
+        sqlite3_exec(db, "PRAGMA foreign_keys = ON;", NULL, NULL, NULL);
+        char sql[128];
+        snprintf(sql, sizeof(sql), "DELETE FROM paintings WHERE id = %d;", *autosave_id);
+        sqlite3_exec(db, sql, NULL, NULL, NULL);
+    }
+
+    // Save and track the new ID
+    *autosave_id = db_save_painting(db, "_autosave", layers, layer_count, width, height);
+}
+
 // ── Load ──────────────────────────────────────────────────────────────────────
 
 bool db_load_painting(sqlite3 *db, int id,
@@ -350,6 +367,17 @@ bool db_delete_painting(sqlite3 *db, int id) {
     if (sqlite3_prepare_v2(db, "DELETE FROM paintings WHERE id = ?;",
                            -1, &stmt, NULL) != SQLITE_OK) return false;
     sqlite3_bind_int(stmt, 1, id);
+    bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+bool db_rename_painting(sqlite3 *db, int id, const char *new_name) {
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, "UPDATE paintings SET name = ?, updated_at = datetime('now') WHERE id = ?;",
+                           -1, &stmt, NULL) != SQLITE_OK) return false;
+    sqlite3_bind_text(stmt, 1, new_name, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 2, id);
     bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
     sqlite3_finalize(stmt);
     return ok;

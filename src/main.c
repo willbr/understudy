@@ -39,6 +39,7 @@ int main(void) {
         TraceLog(LOG_WARNING, "Could not open database — save/load disabled");
 
     float minimap_t = 0.0f;  // countdown; minimap visible while > 0
+    int   autosave_id = 0;  // DB id of current session's autosave (0 = none yet)
     bool  was_sizing = false;
     Vector2 size_anchor = {0}; // mouse position when D was pressed
     bool  was_zooming = false;
@@ -72,6 +73,17 @@ int main(void) {
                           GetScreenWidth() - canvas_x,
                           GetScreenHeight());
 
+        // Autosave after each stroke ends
+        {
+            static bool prev_drawing = false;
+            if (prev_drawing && !app.canvas.is_drawing && app.canvas.dirty && app.db)
+                db_autosave(app.db, &autosave_id,
+                            app.canvas.layers, app.canvas.layer_count,
+                            app.canvas.width, app.canvas.height);
+            prev_drawing = app.canvas.is_drawing;
+        }
+
+
         if (app.ui.mode == UI_NONE) {
             ToolbarEvents ev = {0};
             if (!toolbar_hidden)
@@ -85,11 +97,8 @@ int main(void) {
 
             // Toolbar button actions
             if (ev.wants_new) {
-                if (app.canvas.dirty) {
-                    app.ui.mode = UI_CONFIRM_NEW;
-                } else {
-                    canvas_clear(&app.canvas);
-                }
+                canvas_clear(&app.canvas);
+                autosave_id = 0;  // new session → new autosave slot
             }
             if (ev.wants_save && app.db) {
                 app.ui.mode           = UI_SAVE_DIALOG;
@@ -568,6 +577,10 @@ int main(void) {
     }
 
     // ── Cleanup ───────────────────────────────────────────────────────────────
+    if (app.db && app.canvas.dirty)
+        db_autosave(app.db, &autosave_id,
+                    app.canvas.layers, app.canvas.layer_count,
+                    app.canvas.width, app.canvas.height);
     ui_free(&app.ui);
     canvas_free(&app.canvas);
     UnloadFont(g_font);

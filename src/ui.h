@@ -9,7 +9,6 @@ typedef enum UIMode {
     UI_NONE = 0,
     UI_SAVE_DIALOG,
     UI_LOAD_LIST,
-    UI_CONFIRM_NEW,
     UI_EXPORT_DIALOG,
     UI_CROP_MODE,
     UI_RESIZE_DIALOG,
@@ -27,6 +26,7 @@ typedef struct {
     int           load_count;
     int           load_scroll;
     int           load_selected;
+    bool          load_renaming;  // inline rename active
     // Crop mode
     Vector2       crop_start;
     Vector2       crop_end;

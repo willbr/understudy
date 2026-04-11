@@ -19,6 +19,11 @@ int  db_save_painting(sqlite3 *db, const char *name,
                       const Layer *layers, int layer_count,
                       int width, int height);
 
+// Autosave: overwrites the autosave for the current session (tracked by ID)
+void db_autosave(sqlite3 *db, int *autosave_id,
+                 const Layer *layers, int layer_count,
+                 int width, int height);
+
 // Caller owns the returned Layer array; free with db_free_layers().
 bool db_load_painting(sqlite3 *db, int id,
                       Layer **out_layers, int *out_layer_count,
@@ -29,3 +34,4 @@ void db_free_list(PaintingMeta *list);
 void db_free_layers(Layer *layers, int count);
 
 bool db_delete_painting(sqlite3 *db, int id);
+bool db_rename_painting(sqlite3 *db, int id, const char *new_name);

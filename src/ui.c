@@ -130,6 +130,31 @@ static void load_list_update(UIState *u, Canvas *canvas, sqlite3 *db) {
     Rectangle r_open   = {px + 390, py + 420, 80, 30};
     Rectangle r_cancel = {px + 280, py + 420, 80, 30};
     Rectangle r_delete = {px + 10,  py + 420, 80, 30};
+    Rectangle r_rename = {px + 100, py + 420, 80, 30};
+
+    // Inline rename mode
+    if (u->load_renaming) {
+        int ch;
+        while ((ch = GetCharPressed()) != 0) {
+            if (u->text_len < 127) {
+                u->text_input[u->text_len++] = (char)ch;
+                u->text_input[u->text_len]   = '\0';
+            }
+        }
+        if (IsKeyPressed(KEY_BACKSPACE) && u->text_len > 0)
+            u->text_input[--u->text_len] = '\0';
+
+        if (IsKeyPressed(KEY_ENTER) && u->text_len > 0) {
+            db_rename_painting(db, u->load_list[u->load_selected].id, u->text_input);
+            db_free_list(u->load_list);
+            u->load_list = NULL;
+            db_list_paintings(db, &u->load_list, &u->load_count);
+            u->load_renaming = false;
+        }
+        if (IsKeyPressed(KEY_ESCAPE))
+            u->load_renaming = false;
+        return;
+    }
 
     if (ui_button(r_open, "Open") && u->load_selected >= 0 &&
         u->load_selected < u->load_count) {
@@ -138,7 +163,6 @@ static void load_list_update(UIState *u, Canvas *canvas, sqlite3 *db) {
         int lcount = 0, w = 0, h = 0;
         if (db_load_painting(db, m->id, &layers, &lcount, &w, &h)) {
             canvas_load_layers(canvas, layers, lcount);
-            // canvas_load_layers takes ownership; no free needed here
         }
         ui_free(u);
         u->mode = UI_NONE;
@@ -152,12 +176,21 @@ static void load_list_update(UIState *u, Canvas *canvas, sqlite3 *db) {
     if (ui_button(r_delete, "Delete") && u->load_selected >= 0 &&
         u->load_selected < u->load_count) {
         db_delete_painting(db, u->load_list[u->load_selected].id);
-        // Refresh list
         db_free_list(u->load_list);
         u->load_list = NULL;
         db_list_paintings(db, &u->load_list, &u->load_count);
         if (u->load_selected >= u->load_count)
             u->load_selected = u->load_count - 1;
+    }
+
+    if (ui_button(r_rename, "Rename") && u->load_selected >= 0 &&
+        u->load_selected < u->load_count) {
+        // Pre-fill with current name
+        strncpy(u->text_input, u->load_list[u->load_selected].name, 127);
+        u->text_input[127] = '\0';
+        u->text_len = (int)strlen(u->text_input);
+        u->load_renaming = true;
+        u->cursor_blink_t = 0.0f;
     }
 }
 
@@ -198,47 +231,27 @@ static void load_list_draw(const UIState *u) {
         DrawUI(sc, (int)px + 10, (int)(list_y + LOAD_VISIBLE * LOAD_ROW_H + 4), 12, GRAY);
     }
 
-    Rectangle r_open   = {px + 390, py + 420, 80, 30};
-    Rectangle r_cancel = {px + 280, py + 420, 80, 30};
-    Rectangle r_delete = {px + 10,  py + 420, 80, 30};
-    ui_button(r_open, "Open");
-    ui_button(r_cancel, "Cancel");
-    ui_button(r_delete, "Delete");
-}
-
-// ── Confirm New ───────────────────────────────────────────────────────────────
-
-static void confirm_new_update(UIState *u, Canvas *canvas) {
-    float px = WIN_W / 2.0f - 160;
-    float py = WIN_H / 2.0f - 60;
-    Rectangle r_yes = {px + 220, py + 80, 80, 30};
-    Rectangle r_no  = {px + 50,  py + 80, 80, 30};
-
-    if (ui_button(r_yes, "Yes")) {
-        canvas_clear(canvas);
-        canvas->dirty = false;
-        u->mode = UI_NONE;
+    // Inline rename field
+    if (u->load_renaming) {
+        Rectangle field = {px + 10, py + 420, 380, 28};
+        DrawRectangleRec(field, (Color){20, 20, 20, 255});
+        DrawRectangleLinesEx(field, 1, (Color){100, 160, 255, 255});
+        DrawUI(u->text_input, (int)field.x + 5, (int)field.y + 6, 14, WHITE);
+        if ((int)(u->cursor_blink_t * 2) % 2 == 0) {
+            int tx = MeasureUI(u->text_input, 14);
+            DrawRectangle((int)field.x + 5 + tx, (int)field.y + 5, 2, 18, WHITE);
+        }
+        DrawUI("Enter to confirm, Esc to cancel", (int)px + 10, (int)py + 452, 11, (Color){80,80,80,255});
+    } else {
+        Rectangle r_open   = {px + 390, py + 420, 80, 30};
+        Rectangle r_cancel = {px + 280, py + 420, 80, 30};
+        Rectangle r_delete = {px + 10,  py + 420, 80, 30};
+        Rectangle r_rename = {px + 100, py + 420, 80, 30};
+        ui_button(r_open, "Open");
+        ui_button(r_cancel, "Cancel");
+        ui_button(r_delete, "Delete");
+        ui_button(r_rename, "Rename");
     }
-    if (IsKeyPressed(KEY_ESCAPE) || ui_button(r_no, "Cancel")) {
-        u->mode = UI_NONE;
-    }
-}
-
-static void confirm_new_draw(void) {
-    float px = WIN_W / 2.0f - 160;
-    float py = WIN_H / 2.0f - 60;
-    DrawRectangle(0, 0, WIN_W, WIN_H, Fade(BLACK, 0.55f));
-    DrawRectangle((int)px, (int)py, 320, 130, (Color){30, 30, 30, 255});
-    DrawRectangleLinesEx((Rectangle){px, py, 320, 130}, 1, GRAY);
-    DrawUI("Discard unsaved changes?", (int)px + 10, (int)py + 15, 15, RAYWHITE);
-    DrawUI("Current painting will be lost.", (int)px + 10, (int)py + 40, 13, LIGHTGRAY);
-
-    float bpx = WIN_W / 2.0f - 160;
-    float bpy = WIN_H / 2.0f - 60;
-    Rectangle r_yes = {bpx + 220, bpy + 80, 80, 30};
-    Rectangle r_no  = {bpx + 50,  bpy + 80, 80, 30};
-    ui_button(r_yes, "Yes");
-    ui_button(r_no,  "Cancel");
 }
 
 // ── Export Dialog ─────────────────────────────────────────────────────────────
@@ -625,7 +638,6 @@ void ui_update(UIState *u, Canvas *canvas, sqlite3 *db, int canvas_x) {
     switch (u->mode) {
         case UI_SAVE_DIALOG:   save_dialog_update(u, canvas, db); break;
         case UI_LOAD_LIST:     load_list_update(u, canvas, db);   break;
-        case UI_CONFIRM_NEW:   confirm_new_update(u, canvas);     break;
         case UI_EXPORT_DIALOG: export_dialog_update(u, canvas);   break;
         case UI_CROP_MODE:     crop_mode_update(u, canvas, canvas_x); break;
         case UI_RESIZE_DIALOG: resize_dialog_update(u, canvas);   break;
@@ -638,7 +650,6 @@ void ui_draw(const UIState *u, const Canvas *c, int canvas_x) {
     switch (u->mode) {
         case UI_SAVE_DIALOG:   save_dialog_draw(u); break;
         case UI_LOAD_LIST:     load_list_draw(u);   break;
-        case UI_CONFIRM_NEW:   confirm_new_draw();  break;
         case UI_EXPORT_DIALOG: export_dialog_draw(u); break;
         case UI_CROP_MODE:     crop_mode_draw(u, c, canvas_x); break;
         case UI_RESIZE_DIALOG: resize_dialog_draw(u); break;
