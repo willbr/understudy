@@ -39,7 +39,22 @@ static Texture2D gen_paper_texture(void) {
     return tex;
 }
 
-static void draw_paper(const Canvas *c, float vx, float vy, float zoom) {
+// Draw paper using the procedural shader (crisp at any zoom)
+static void draw_paper_shader(const Canvas *c, float vx, float vy, float zoom) {
+    float docSize[2] = {(float)c->width, (float)c->height};
+    SetShaderValue(c->paper_shader, GetShaderLocation(c->paper_shader, "docSize"),
+                   docSize, SHADER_UNIFORM_VEC2);
+
+    BeginShaderMode(c->paper_shader);
+    // src covers full texture so fragTexCoord ranges 0..1 across the quad
+    Rectangle src  = {0, 0, (float)c->paper_tex.width, (float)c->paper_tex.height};
+    Rectangle dest = {vx, vy, (float)c->width * zoom, (float)c->height * zoom};
+    DrawTexturePro(c->paper_tex, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
+    EndShaderMode();
+}
+
+// Bitmap-based paper for minimap (shader not needed at tiny scale)
+static void draw_paper_bitmap(const Canvas *c, float vx, float vy, float zoom) {
     Rectangle src  = {0, 0, (float)c->width, (float)c->height};
     Rectangle dest = {vx, vy, (float)c->width * zoom,
                                (float)c->height * zoom};
@@ -104,7 +119,7 @@ static void render_stroke_transformed(const Stroke *s,
 static void redraw_all(Canvas *c) {
     BeginTextureMode(c->rt);
     ClearBackground((Color){45, 45, 45, 255});
-    draw_paper(c, c->view_x, c->view_y, c->zoom);
+    draw_paper_shader(c, c->view_x, c->view_y, c->zoom);
     for (int li = 0; li < c->layer_count; li++) {
         if (!c->layers[li].visible) continue;
         Layer *l = &c->layers[li];
@@ -120,7 +135,7 @@ static void update_minimap(Canvas *c) {
     float ms = (float)MINIMAP_SIZE / (float)max_dim;
     BeginTextureMode(c->minimap_rt);
     ClearBackground((Color){45, 45, 45, 255});
-    draw_paper(c, 0.0f, 0.0f, ms);
+    draw_paper_bitmap(c, 0.0f, 0.0f, ms);
     for (int li = 0; li < c->layer_count; li++) {
         if (!c->layers[li].visible) continue;
         Layer *l = &c->layers[li];
@@ -153,6 +168,7 @@ void canvas_init(Canvas *c) {
     c->height = CANVAS_DOC_H;
 
     c->paper_tex = gen_paper_texture();
+    c->paper_shader = LoadShader(NULL, "src/paper.fs");
 
     c->rt = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
     c->minimap_rt = LoadRenderTexture(MINIMAP_SIZE, MINIMAP_SIZE);
@@ -172,6 +188,7 @@ void canvas_init(Canvas *c) {
 }
 
 void canvas_free(Canvas *c) {
+    UnloadShader(c->paper_shader);
     UnloadTexture(c->paper_tex);
     UnloadRenderTexture(c->minimap_rt);
     UnloadRenderTexture(c->rt);
@@ -305,7 +322,7 @@ bool canvas_export_png(Canvas *c, const char *path) {
     RenderTexture2D export_rt = LoadRenderTexture(c->width, c->height);
     BeginTextureMode(export_rt);
     ClearBackground(WHITE);
-    draw_paper(c, 0.0f, 0.0f, 1.0f);
+    draw_paper_shader(c, 0.0f, 0.0f, 1.0f);
     for (int li = 0; li < c->layer_count; li++) {
         if (!c->layers[li].visible) continue;
         Layer *l = &c->layers[li];
