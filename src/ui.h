@@ -33,6 +33,8 @@ typedef struct {
     Vector2       crop_end;
     bool          crop_dragging;
     bool          crop_rect_valid;
+    // Export dialog
+    int           export_scale;     // 1x, 2x, 4x, 8x
     // Resize dialog
     char          resize_w_buf[16];
     int           resize_w_len;

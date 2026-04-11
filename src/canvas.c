@@ -490,41 +490,54 @@ void canvas_load_layers(Canvas *c, Layer *layers, int layer_count) {
     update_minimap(c);
 }
 
-bool canvas_export_png(Canvas *c, const char *path) {
-    int ew = c->width, eh = c->height;
+bool canvas_export_png(Canvas *c, const char *path, int scale) {
+    if (scale < 1) scale = 1;
+    if (scale > 8) scale = 8;
+    int ew = c->width * scale, eh = c->height * scale;
 
-    // Render strokes at full doc resolution
-    RenderTexture2D strokes = LoadRenderTexture(ew, eh);
+    // Render at 2x target resolution for anti-aliasing (supersampling)
+    int ssw = ew * 2, ssh = eh * 2;
+    float ss_zoom = (float)(scale * 2);
+
+    RenderTexture2D strokes = LoadRenderTexture(ssw, ssh);
     BeginTextureMode(strokes);
     ClearBackground(BLANK);
     for (int li = 0; li < c->layer_count; li++) {
         if (!c->layers[li].visible) continue;
         Layer *l = &c->layers[li];
         for (int si = 0; si < l->stroke_count; si++)
-            render_stroke_transformed(&l->strokes[si], 0.0f, 0.0f, 1.0f);
+            render_stroke_transformed(&l->strokes[si], 0.0f, 0.0f, ss_zoom);
     }
     EndTextureMode();
 
-    // Composite with ink shader
-    RenderTexture2D export_rt = LoadRenderTexture(ew, eh);
-    BeginTextureMode(export_rt);
+    // Composite with ink shader at supersample resolution
+    RenderTexture2D ss_rt = LoadRenderTexture(ssw, ssh);
+    BeginTextureMode(ss_rt);
     ClearBackground(WHITE);
-    float docSize[2] = {(float)ew, (float)eh};
+    float docSize[2] = {(float)c->width, (float)c->height};
     float viewOff[2] = {0.0f, 0.0f};
-    float res[2]     = {(float)ew, (float)eh};
-    float z = 1.0f;
+    float res[2]     = {(float)ssw, (float)ssh};
     SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "docSize"), docSize, SHADER_UNIFORM_VEC2);
     SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "viewOffset"), viewOff, SHADER_UNIFORM_VEC2);
-    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "zoom"), &z, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "zoom"), &ss_zoom, SHADER_UNIFORM_FLOAT);
     SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "resolution"), res, SHADER_UNIFORM_VEC2);
     BeginShaderMode(c->ink_shader);
-    Rectangle src  = {0, 0, (float)ew, -(float)eh};
-    Rectangle dest = {0, 0, (float)ew, (float)eh};
-    DrawTexturePro(strokes.texture, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
+    Rectangle ss_src  = {0, 0, (float)ssw, -(float)ssh};
+    Rectangle ss_dest = {0, 0, (float)ssw, (float)ssh};
+    DrawTexturePro(strokes.texture, ss_src, ss_dest, (Vector2){0, 0}, 0.0f, WHITE);
     EndShaderMode();
     EndTextureMode();
-
     UnloadRenderTexture(strokes);
+
+    // Downsample 2x with bilinear filtering to target resolution
+    SetTextureFilter(ss_rt.texture, TEXTURE_FILTER_BILINEAR);
+    RenderTexture2D export_rt = LoadRenderTexture(ew, eh);
+    BeginTextureMode(export_rt);
+    Rectangle down_src  = {0, 0, (float)ssw, -(float)ssh};
+    Rectangle down_dest = {0, 0, (float)ew, (float)eh};
+    DrawTexturePro(ss_rt.texture, down_src, down_dest, (Vector2){0, 0}, 0.0f, WHITE);
+    EndTextureMode();
+    UnloadRenderTexture(ss_rt);
 
     // Grab image (Y-flip needed for RenderTexture)
     Image img = LoadImageFromTexture(export_rt.texture);

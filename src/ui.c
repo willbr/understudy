@@ -273,13 +273,23 @@ static void export_dialog_update(UIState *u, Canvas *canvas) {
     }
 
     float px = WIN_W / 2.0f - 200;
-    float py = WIN_H / 2.0f - 70;
-    Rectangle r_ok     = {px + 250, py + 100, 80, 30};
-    Rectangle r_cancel = {px + 50,  py + 100, 80, 30};
+    float py = WIN_H / 2.0f - 90;
+
+    // Scale selector buttons
+    Rectangle r_1x = {px + 10,  py + 70, 45, 24};
+    Rectangle r_2x = {px + 60,  py + 70, 45, 24};
+    Rectangle r_4x = {px + 110, py + 70, 45, 24};
+    Rectangle r_8x = {px + 160, py + 70, 45, 24};
+    if (ui_button(r_1x, "1x")) u->export_scale = 1;
+    if (ui_button(r_2x, "2x")) u->export_scale = 2;
+    if (ui_button(r_4x, "4x")) u->export_scale = 4;
+    if (ui_button(r_8x, "8x")) u->export_scale = 8;
+
+    Rectangle r_ok     = {px + 250, py + 120, 80, 30};
+    Rectangle r_cancel = {px + 50,  py + 120, 80, 30};
 
     if (IsKeyPressed(KEY_ENTER) || ui_button(r_ok, "Export")) {
         if (u->text_len > 0) {
-            // Append .png if not present
             char path[256];
             const char *home = getenv("HOME");
             if (strstr(u->text_input, "/") != NULL) {
@@ -291,7 +301,7 @@ static void export_dialog_update(UIState *u, Canvas *canvas) {
             if (len < 4 || strcmp(path + len - 4, ".png") != 0) {
                 strncat(path, ".png", sizeof(path) - len - 1);
             }
-            canvas_export_png(canvas, path);
+            canvas_export_png(canvas, path, u->export_scale);
             u->mode = UI_NONE;
         }
     }
@@ -302,29 +312,50 @@ static void export_dialog_update(UIState *u, Canvas *canvas) {
 
 static void export_dialog_draw(const UIState *u) {
     float px = WIN_W / 2.0f - 200;
-    float py = WIN_H / 2.0f - 70;
+    float py = WIN_H / 2.0f - 90;
     DrawRectangle(0, 0, WIN_W, WIN_H, Fade(BLACK, 0.55f));
-    DrawRectangle((int)px, (int)py, 400, 150, (Color){30, 30, 30, 255});
-    DrawRectangleLinesEx((Rectangle){px, py, 400, 150}, 1, GRAY);
+    DrawRectangle((int)px, (int)py, 400, 175, (Color){30, 30, 30, 255});
+    DrawRectangleLinesEx((Rectangle){px, py, 400, 175}, 1, GRAY);
 
     DrawUI("Export PNG", (int)px + 10, (int)py + 10, 16, RAYWHITE);
     DrawUI("Filename (saved to Desktop):", (int)px + 10, (int)py + 30, 12, LIGHTGRAY);
 
-    Rectangle field = {px + 10, py + 48, 380, 30};
+    Rectangle field = {px + 10, py + 48, 380, 28};
     DrawRectangleRec(field, (Color){20, 20, 20, 255});
     DrawRectangleLinesEx(field, 1, (Color){140, 140, 140, 255});
-    DrawUI(u->text_input, (int)field.x + 5, (int)field.y + 7, 14, WHITE);
+    DrawUI(u->text_input, (int)field.x + 5, (int)field.y + 6, 14, WHITE);
 
     if ((int)(u->cursor_blink_t * 2) % 2 == 0) {
         int tx = MeasureUI(u->text_input, 14);
-        DrawRectangle((int)field.x + 5 + tx, (int)field.y + 5, 2, 20, WHITE);
+        DrawRectangle((int)field.x + 5 + tx, (int)field.y + 5, 2, 18, WHITE);
     }
 
     if (u->text_len == 0)
-        DrawUI("painting", (int)field.x + 6, (int)field.y + 8, 14, (Color){80, 80, 80, 255});
+        DrawUI("painting", (int)field.x + 6, (int)field.y + 7, 14, (Color){80, 80, 80, 255});
 
-    Rectangle r_ok     = {px + 250, py + 100, 80, 30};
-    Rectangle r_cancel = {px + 50,  py + 100, 80, 30};
+    // Scale selector
+    DrawUI("Scale:", (int)px + 10, (int)py + 82, 12, LIGHTGRAY);
+    Rectangle r_1x = {px + 10,  py + 70, 45, 24};
+    Rectangle r_2x = {px + 60,  py + 70, 45, 24};
+    Rectangle r_4x = {px + 110, py + 70, 45, 24};
+    Rectangle r_8x = {px + 160, py + 70, 45, 24};
+    // Highlight active scale
+    if (u->export_scale == 1) DrawRectangleRec(r_1x, DARKBLUE);
+    if (u->export_scale == 2) DrawRectangleRec(r_2x, DARKBLUE);
+    if (u->export_scale == 4) DrawRectangleRec(r_4x, DARKBLUE);
+    if (u->export_scale == 8) DrawRectangleRec(r_8x, DARKBLUE);
+    ui_button(r_1x, "1x");
+    ui_button(r_2x, "2x");
+    ui_button(r_4x, "4x");
+    ui_button(r_8x, "8x");
+
+    // Scale label
+    char res[32];
+    snprintf(res, sizeof(res), "(%dx resolution)", u->export_scale);
+    DrawUI(res, (int)px + 220, (int)py + 76, 12, (Color){100, 100, 100, 255});
+
+    Rectangle r_ok     = {px + 250, py + 120, 80, 30};
+    Rectangle r_cancel = {px + 50,  py + 120, 80, 30};
     ui_button(r_ok, "Export");
     ui_button(r_cancel, "Cancel");
 }

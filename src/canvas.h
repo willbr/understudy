@@ -67,8 +67,8 @@ void canvas_clear(Canvas *c);
 // Load layers from DB (takes ownership of the layers array)
 void canvas_load_layers(Canvas *c, Layer *layers, int layer_count);
 
-// Export the full document as a PNG file at 1:1 resolution
-bool canvas_export_png(Canvas *c, const char *path);
+// Export the full document as a PNG file at the given scale (1=native, 2=2x, etc.)
+bool canvas_export_png(Canvas *c, const char *path, int scale);
 
 // Crop the document to the given rectangle (document-space coordinates)
 void canvas_crop(Canvas *c, int x, int y, int w, int h);

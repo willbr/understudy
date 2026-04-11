@@ -133,6 +133,7 @@ int main(void) {
                 app.ui.text_len       = 0;
                 app.ui.text_input[0]  = '\0';
                 app.ui.cursor_blink_t = 0.0f;
+                app.ui.export_scale   = 1;
             }
             if (ev.wants_crop) {
                 app.ui.mode = UI_CROP_MODE;
