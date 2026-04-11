@@ -70,9 +70,8 @@ void main() {
     // Paper background
     vec3 paper = paperColor(docCoord);
 
-    // No ink — show paper
-    float strokeIntensity = max(stroke.r, max(stroke.g, stroke.b));
-    if (strokeIntensity < 0.01) {
+    // No ink — show paper (use alpha to detect stroke presence)
+    if (stroke.a < 0.01) {
         finalColor = vec4(paper, 1.0);
         return;
     }
@@ -82,23 +81,15 @@ void main() {
     // Paper grain — use for edge roughness, not to dull the color
     float grain = fbm(docCoord / 6.0 + vec2(7.3, 2.8));
 
-    // Edge detection: find how close we are to the stroke boundary
+    // Edge detection: use alpha of neighbors to find stroke boundary
     vec2 px = 1.0 / resolution;
-    float nl = max(texture(texture0, fragTexCoord + vec2(-px.x, 0.0)).r,
-                   max(texture(texture0, fragTexCoord + vec2(-px.x, 0.0)).g,
-                       texture(texture0, fragTexCoord + vec2(-px.x, 0.0)).b));
-    float nr = max(texture(texture0, fragTexCoord + vec2( px.x, 0.0)).r,
-                   max(texture(texture0, fragTexCoord + vec2( px.x, 0.0)).g,
-                       texture(texture0, fragTexCoord + vec2( px.x, 0.0)).b));
-    float nt = max(texture(texture0, fragTexCoord + vec2(0.0,  px.y)).r,
-                   max(texture(texture0, fragTexCoord + vec2(0.0,  px.y)).g,
-                       texture(texture0, fragTexCoord + vec2(0.0,  px.y)).b));
-    float nb = max(texture(texture0, fragTexCoord + vec2(0.0, -px.y)).r,
-                   max(texture(texture0, fragTexCoord + vec2(0.0, -px.y)).g,
-                       texture(texture0, fragTexCoord + vec2(0.0, -px.y)).b));
+    float nl = texture(texture0, fragTexCoord + vec2(-px.x, 0.0)).a;
+    float nr = texture(texture0, fragTexCoord + vec2( px.x, 0.0)).a;
+    float nt = texture(texture0, fragTexCoord + vec2(0.0,  px.y)).a;
+    float nb = texture(texture0, fragTexCoord + vec2(0.0, -px.y)).a;
 
     float minN = min(min(nl, nr), min(nt, nb));
-    float isEdge = 1.0 - smoothstep(0.0, 0.4, minN / max(strokeIntensity, 0.001));
+    float isEdge = 1.0 - smoothstep(0.0, 0.4, minN / max(stroke.a, 0.001));
 
     // At edges: paper grain eats into the stroke (rough watercolor boundary)
     float edgeErosion = smoothstep(0.3, 0.7, grain) * isEdge;

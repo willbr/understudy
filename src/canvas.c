@@ -189,7 +189,7 @@ static void composite_ink(Canvas *c) {
 static void redraw_all(Canvas *c) {
     // Render all committed strokes into strokes_rt
     BeginTextureMode(c->strokes_rt);
-    ClearBackground(BLACK);
+    ClearBackground(BLANK);
     for (int li = 0; li < c->layer_count; li++) {
         if (!c->layers[li].visible) continue;
         Layer *l = &c->layers[li];
@@ -294,7 +294,7 @@ void canvas_add_point(Canvas *c, Vector2 p) {
 
     // Re-render all committed strokes + current stroke with spline
     BeginTextureMode(c->strokes_rt);
-    ClearBackground(BLACK);
+    ClearBackground(BLANK);
     for (int li = 0; li < c->layer_count; li++) {
         if (!c->layers[li].visible) continue;
         Layer *l = &c->layers[li];
@@ -390,7 +390,7 @@ bool canvas_export_png(Canvas *c, const char *path) {
     // Render strokes at full doc resolution
     RenderTexture2D strokes = LoadRenderTexture(ew, eh);
     BeginTextureMode(strokes);
-    ClearBackground(BLACK);
+    ClearBackground(BLANK);
     for (int li = 0; li < c->layer_count; li++) {
         if (!c->layers[li].visible) continue;
         Layer *l = &c->layers[li];
