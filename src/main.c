@@ -49,6 +49,11 @@ int main(void) {
         // ── Update ────────────────────────────────────────────────────────────
         if (IsKeyPressed(KEY_TAB) && app.ui.mode == UI_NONE) {
             toolbar_hidden = !toolbar_hidden;
+            // Adjust view so canvas content doesn't shift
+            if (toolbar_hidden)
+                app.canvas.view_x += CANVAS_X;
+            else
+                app.canvas.view_x -= CANVAS_X;
             int cx = toolbar_hidden ? 0 : CANVAS_X;
             canvas_resize(&app.canvas, GetScreenWidth() - cx, GetScreenHeight());
         }
@@ -236,6 +241,10 @@ int main(void) {
                 DrawUI(icon, bx + 4, 8, 14, (Color){180, 180, 180, 255});
                 if (hovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                     toolbar_hidden = !toolbar_hidden;
+                    if (toolbar_hidden)
+                        app.canvas.view_x += CANVAS_X;
+                    else
+                        app.canvas.view_x -= CANVAS_X;
                     canvas_x = toolbar_hidden ? 0 : CANVAS_X;
                     canvas_resize(&app.canvas, GetScreenWidth() - canvas_x,
                                   GetScreenHeight());
