@@ -241,24 +241,97 @@ static void confirm_new_draw(void) {
     ui_button(r_no,  "Cancel");
 }
 
+// ── Export Dialog ─────────────────────────────────────────────────────────────
+
+static void export_dialog_update(UIState *u, Canvas *canvas) {
+    int ch;
+    while ((ch = GetCharPressed()) != 0) {
+        if (u->text_len < 127) {
+            u->text_input[u->text_len++] = (char)ch;
+            u->text_input[u->text_len]   = '\0';
+        }
+    }
+    if (IsKeyPressed(KEY_BACKSPACE) && u->text_len > 0) {
+        u->text_input[--u->text_len] = '\0';
+    }
+
+    float px = WIN_W / 2.0f - 200;
+    float py = WIN_H / 2.0f - 70;
+    Rectangle r_ok     = {px + 250, py + 100, 80, 30};
+    Rectangle r_cancel = {px + 50,  py + 100, 80, 30};
+
+    if (IsKeyPressed(KEY_ENTER) || ui_button(r_ok, "Export")) {
+        if (u->text_len > 0) {
+            // Append .png if not present
+            char path[256];
+            const char *home = getenv("HOME");
+            if (strstr(u->text_input, "/") != NULL) {
+                snprintf(path, sizeof(path), "%s", u->text_input);
+            } else {
+                snprintf(path, sizeof(path), "%s/Desktop/%s", home ? home : ".", u->text_input);
+            }
+            int len = (int)strlen(path);
+            if (len < 4 || strcmp(path + len - 4, ".png") != 0) {
+                strncat(path, ".png", sizeof(path) - len - 1);
+            }
+            canvas_export_png(canvas, path);
+            u->mode = UI_NONE;
+        }
+    }
+    if (IsKeyPressed(KEY_ESCAPE) || ui_button(r_cancel, "Cancel")) {
+        u->mode = UI_NONE;
+    }
+}
+
+static void export_dialog_draw(const UIState *u) {
+    float px = WIN_W / 2.0f - 200;
+    float py = WIN_H / 2.0f - 70;
+    DrawRectangle(0, 0, WIN_W, WIN_H, Fade(BLACK, 0.55f));
+    DrawRectangle((int)px, (int)py, 400, 150, (Color){30, 30, 30, 255});
+    DrawRectangleLinesEx((Rectangle){px, py, 400, 150}, 1, GRAY);
+
+    DrawUI("Export PNG", (int)px + 10, (int)py + 10, 16, RAYWHITE);
+    DrawUI("Filename (saved to Desktop):", (int)px + 10, (int)py + 30, 12, LIGHTGRAY);
+
+    Rectangle field = {px + 10, py + 48, 380, 30};
+    DrawRectangleRec(field, (Color){20, 20, 20, 255});
+    DrawRectangleLinesEx(field, 1, (Color){140, 140, 140, 255});
+    DrawUI(u->text_input, (int)field.x + 5, (int)field.y + 7, 14, WHITE);
+
+    if ((int)(u->cursor_blink_t * 2) % 2 == 0) {
+        int tx = MeasureUI(u->text_input, 14);
+        DrawRectangle((int)field.x + 5 + tx, (int)field.y + 5, 2, 20, WHITE);
+    }
+
+    if (u->text_len == 0)
+        DrawUI("painting", (int)field.x + 6, (int)field.y + 8, 14, (Color){80, 80, 80, 255});
+
+    Rectangle r_ok     = {px + 250, py + 100, 80, 30};
+    Rectangle r_cancel = {px + 50,  py + 100, 80, 30};
+    ui_button(r_ok, "Export");
+    ui_button(r_cancel, "Cancel");
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 void ui_update(UIState *u, Canvas *canvas, sqlite3 *db) {
     u->cursor_blink_t += GetFrameTime();
 
     switch (u->mode) {
-        case UI_SAVE_DIALOG:  save_dialog_update(u, canvas, db); break;
-        case UI_LOAD_LIST:    load_list_update(u, canvas, db);   break;
-        case UI_CONFIRM_NEW:  confirm_new_update(u, canvas);     break;
+        case UI_SAVE_DIALOG:   save_dialog_update(u, canvas, db); break;
+        case UI_LOAD_LIST:     load_list_update(u, canvas, db);   break;
+        case UI_CONFIRM_NEW:   confirm_new_update(u, canvas);     break;
+        case UI_EXPORT_DIALOG: export_dialog_update(u, canvas);   break;
         default: break;
     }
 }
 
 void ui_draw(const UIState *u) {
     switch (u->mode) {
-        case UI_SAVE_DIALOG:  save_dialog_draw(u); break;
-        case UI_LOAD_LIST:    load_list_draw(u);   break;
-        case UI_CONFIRM_NEW:  confirm_new_draw();  break;
+        case UI_SAVE_DIALOG:   save_dialog_draw(u); break;
+        case UI_LOAD_LIST:     load_list_draw(u);   break;
+        case UI_CONFIRM_NEW:   confirm_new_draw();  break;
+        case UI_EXPORT_DIALOG: export_dialog_draw(u); break;
         default: break;
     }
 }

@@ -299,6 +299,29 @@ void canvas_load_layers(Canvas *c, Layer *layers, int layer_count) {
     update_minimap(c);
 }
 
+bool canvas_export_png(Canvas *c, const char *path) {
+    // Render all visible layers at full doc resolution (1:1, no pan offset)
+    RenderTexture2D export_rt = LoadRenderTexture(c->width, c->height);
+    BeginTextureMode(export_rt);
+    ClearBackground(WHITE);
+    draw_paper(c, 0.0f, 0.0f, 1.0f);
+    for (int li = 0; li < c->layer_count; li++) {
+        if (!c->layers[li].visible) continue;
+        Layer *l = &c->layers[li];
+        for (int si = 0; si < l->stroke_count; si++)
+            render_stroke_transformed(&l->strokes[si], 0.0f, 0.0f, 1.0f);
+    }
+    EndTextureMode();
+
+    // Grab image (Y-flip needed for RenderTexture)
+    Image img = LoadImageFromTexture(export_rt.texture);
+    ImageFlipVertical(&img);
+    bool ok = ExportImage(img, path);
+    UnloadImage(img);
+    UnloadRenderTexture(export_rt);
+    return ok;
+}
+
 void canvas_redraw_for_view(Canvas *c) {
     redraw_all(c);
 }

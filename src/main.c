@@ -84,6 +84,12 @@ int main(void) {
                 app.ui.load_selected = app.ui.load_count > 0 ? 0 : -1;
                 app.ui.mode          = UI_LOAD_LIST;
             }
+            if (ev.wants_export) {
+                app.ui.mode           = UI_EXPORT_DIALOG;
+                app.ui.text_len       = 0;
+                app.ui.text_input[0]  = '\0';
+                app.ui.cursor_blink_t = 0.0f;
+            }
 
             // Undo: Cmd+Z (macOS) or Ctrl+Z
             bool mod = IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER) ||

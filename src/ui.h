@@ -10,6 +10,7 @@ typedef enum UIMode {
     UI_SAVE_DIALOG,
     UI_LOAD_LIST,
     UI_CONFIRM_NEW,
+    UI_EXPORT_DIALOG,
 } UIMode;
 
 typedef struct {

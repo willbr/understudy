@@ -24,10 +24,11 @@
 #define Y_BTN_NEW    470
 #define Y_BTN_SAVE   505
 #define Y_BTN_LOAD   540
+#define Y_BTN_EXPORT 575
 
 // Layer panel
-#define Y_LAYER_LABEL  580
-#define Y_LAYER_LIST   598
+#define Y_LAYER_LABEL  615
+#define Y_LAYER_LIST   633
 #define LAYER_ROW_H     24
 #define MAX_VISIBLE_LAYERS 5
 #define Y_LAYER_BTNS   (Y_LAYER_LIST + MAX_VISIBLE_LAYERS * LAYER_ROW_H + 4)
@@ -166,7 +167,8 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
     // Action buttons
     button((Rectangle){TB_PAD, Y_BTN_NEW,  TB_INNER, BTN_H}, "New Canvas", false);
     button((Rectangle){TB_PAD, Y_BTN_SAVE, TB_INNER, BTN_H}, "Save",       false);
-    button((Rectangle){TB_PAD, Y_BTN_LOAD, TB_INNER, BTN_H}, "Load",       false);
+    button((Rectangle){TB_PAD, Y_BTN_LOAD,   TB_INNER, BTN_H}, "Load",       false);
+    button((Rectangle){TB_PAD, Y_BTN_EXPORT, TB_INNER, BTN_H}, "Export PNG", false);
 
     // ── Layer panel ──────────────────────────────────────────────────────────
     DrawUI("Layers", TB_PAD, Y_LAYER_LABEL, 13, LIGHTGRAY);
@@ -204,7 +206,7 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
 }
 
 ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
-    ToolbarEvents ev = {false, false, false};
+    ToolbarEvents ev = {false, false, false, false};
     Vector2 mouse = GetMousePosition();
     bool ldown    = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
     bool lpress   = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
@@ -269,6 +271,8 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
         ev.wants_save = true;
     if (lpress && CheckCollisionPointRec(mouse, (Rectangle){TB_PAD, Y_BTN_LOAD, TB_INNER, BTN_H}))
         ev.wants_load = true;
+    if (lpress && CheckCollisionPointRec(mouse, (Rectangle){TB_PAD, Y_BTN_EXPORT, TB_INNER, BTN_H}))
+        ev.wants_export = true;
 
     // ── Layer panel interaction ──────────────────────────────────────────────
     if (lpress) {
