@@ -6,11 +6,6 @@
 #include <sys/stat.h>
 
 // ── Schema ────────────────────────────────────────────────────────────────────
-//
-// paintings  — one row per saved painting
-// strokes    — one row per stroke, points packed as raw Vector2 (float[2]) BLOB
-//
-// ON DELETE CASCADE removes strokes automatically when a painting is deleted.
 
 static const char *SCHEMA_SQL =
     "PRAGMA foreign_keys = ON;"
@@ -24,9 +19,18 @@ static const char *SCHEMA_SQL =
     "  height     INTEGER NOT NULL"
     ");"
 
+    "CREATE TABLE IF NOT EXISTS layers ("
+    "  id          INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  painting_id INTEGER NOT NULL REFERENCES paintings(id) ON DELETE CASCADE,"
+    "  layer_idx   INTEGER NOT NULL,"
+    "  name        TEXT    NOT NULL,"
+    "  visible     INTEGER NOT NULL DEFAULT 1"
+    ");"
+
     "CREATE TABLE IF NOT EXISTS strokes ("
     "  id          INTEGER PRIMARY KEY AUTOINCREMENT,"
     "  painting_id INTEGER NOT NULL REFERENCES paintings(id) ON DELETE CASCADE,"
+    "  layer_id    INTEGER NOT NULL REFERENCES layers(id) ON DELETE CASCADE,"
     "  stroke_idx  INTEGER NOT NULL,"
     "  color_r     INTEGER NOT NULL,"
     "  color_g     INTEGER NOT NULL,"
@@ -34,16 +38,14 @@ static const char *SCHEMA_SQL =
     "  color_a     INTEGER NOT NULL,"
     "  radius      INTEGER NOT NULL,"
     "  tool        INTEGER NOT NULL,"
-    "  points      BLOB    NOT NULL"   // packed float pairs: [x0,y0, x1,y1, ...]
+    "  points      BLOB    NOT NULL"
     ");";
 
 // ── Open/close ────────────────────────────────────────────────────────────────
 
-// Current schema version. Bump this whenever the schema changes incompatibly.
-#define SCHEMA_VERSION 2
+#define SCHEMA_VERSION 3
 
 static bool migrate(sqlite3 *db) {
-    // Read the stored version
     sqlite3_stmt *stmt;
     int version = 0;
     if (sqlite3_prepare_v2(db, "PRAGMA user_version;", -1, &stmt, NULL) == SQLITE_OK) {
@@ -53,13 +55,12 @@ static bool migrate(sqlite3 *db) {
 
     if (version == SCHEMA_VERSION) return true;
 
-    // Version mismatch — drop old tables and recreate from scratch.
-    // Old pixel_data-based paintings are incompatible; warn and wipe.
     if (version > 0)
-        fprintf(stderr, "db: schema version %d → %d, rebuilding (old data dropped)\n",
+        fprintf(stderr, "db: schema version %d -> %d, rebuilding (old data dropped)\n",
                 version, SCHEMA_VERSION);
 
     sqlite3_exec(db, "DROP TABLE IF EXISTS strokes;",   NULL, NULL, NULL);
+    sqlite3_exec(db, "DROP TABLE IF EXISTS layers;",    NULL, NULL, NULL);
     sqlite3_exec(db, "DROP TABLE IF EXISTS paintings;", NULL, NULL, NULL);
 
     char *err = NULL;
@@ -104,12 +105,11 @@ void db_close(sqlite3 *db) {
 // ── Save ──────────────────────────────────────────────────────────────────────
 
 int db_save_painting(sqlite3 *db, const char *name,
-                     const Stroke *strokes, int count,
+                     const Layer *layers, int layer_count,
                      int width, int height) {
-    // Wrap everything in a transaction for atomicity
     sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
 
-    // Insert paintings row
+    // Insert painting row
     sqlite3_stmt *stmt;
     const char *ins_painting =
         "INSERT INTO paintings (name, width, height) VALUES (?, ?, ?);";
@@ -130,48 +130,78 @@ int db_save_painting(sqlite3 *db, const char *name,
     sqlite3_finalize(stmt);
     int painting_id = (int)sqlite3_last_insert_rowid(db);
 
-    // Insert each stroke
+    // Insert layers and their strokes
+    const char *ins_layer =
+        "INSERT INTO layers (painting_id, layer_idx, name, visible) VALUES (?, ?, ?, ?);";
     const char *ins_stroke =
         "INSERT INTO strokes "
-        "(painting_id, stroke_idx, color_r, color_g, color_b, color_a, radius, tool, points)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);";
-    if (sqlite3_prepare_v2(db, ins_stroke, -1, &stmt, NULL) != SQLITE_OK) {
-        fprintf(stderr, "db_save strokes prepare: %s\n", sqlite3_errmsg(db));
+        "(painting_id, layer_id, stroke_idx, color_r, color_g, color_b, color_a, radius, tool, points)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
+
+    sqlite3_stmt *layer_stmt, *stroke_stmt;
+    if (sqlite3_prepare_v2(db, ins_layer, -1, &layer_stmt, NULL) != SQLITE_OK) {
+        sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+        return -1;
+    }
+    if (sqlite3_prepare_v2(db, ins_stroke, -1, &stroke_stmt, NULL) != SQLITE_OK) {
+        sqlite3_finalize(layer_stmt);
         sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
         return -1;
     }
 
-    for (int i = 0; i < count; i++) {
-        const Stroke *s = &strokes[i];
-        int blob_size = s->count * (int)sizeof(Vector2);
+    for (int li = 0; li < layer_count; li++) {
+        const Layer *l = &layers[li];
 
-        sqlite3_reset(stmt);
-        sqlite3_bind_int (stmt, 1, painting_id);
-        sqlite3_bind_int (stmt, 2, i);
-        sqlite3_bind_int (stmt, 3, s->color.r);
-        sqlite3_bind_int (stmt, 4, s->color.g);
-        sqlite3_bind_int (stmt, 5, s->color.b);
-        sqlite3_bind_int (stmt, 6, s->color.a);
-        sqlite3_bind_int (stmt, 7, s->radius);
-        sqlite3_bind_int (stmt, 8, (int)s->tool);
-        sqlite3_bind_blob(stmt, 9, s->points, blob_size, SQLITE_TRANSIENT);
+        sqlite3_reset(layer_stmt);
+        sqlite3_bind_int (layer_stmt, 1, painting_id);
+        sqlite3_bind_int (layer_stmt, 2, li);
+        sqlite3_bind_text(layer_stmt, 3, l->name, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int (layer_stmt, 4, l->visible ? 1 : 0);
+        if (sqlite3_step(layer_stmt) != SQLITE_DONE) {
+            fprintf(stderr, "db_save layer %d: %s\n", li, sqlite3_errmsg(db));
+            goto fail;
+        }
+        int layer_id = (int)sqlite3_last_insert_rowid(db);
 
-        if (sqlite3_step(stmt) != SQLITE_DONE) {
-            fprintf(stderr, "db_save stroke %d step: %s\n", i, sqlite3_errmsg(db));
-            sqlite3_finalize(stmt);
-            sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
-            return -1;
+        for (int si = 0; si < l->stroke_count; si++) {
+            const Stroke *s = &l->strokes[si];
+            int blob_size = s->count * (int)sizeof(Vector2);
+
+            sqlite3_reset(stroke_stmt);
+            sqlite3_bind_int (stroke_stmt, 1, painting_id);
+            sqlite3_bind_int (stroke_stmt, 2, layer_id);
+            sqlite3_bind_int (stroke_stmt, 3, si);
+            sqlite3_bind_int (stroke_stmt, 4, s->color.r);
+            sqlite3_bind_int (stroke_stmt, 5, s->color.g);
+            sqlite3_bind_int (stroke_stmt, 6, s->color.b);
+            sqlite3_bind_int (stroke_stmt, 7, s->color.a);
+            sqlite3_bind_int (stroke_stmt, 8, s->radius);
+            sqlite3_bind_int (stroke_stmt, 9, (int)s->tool);
+            sqlite3_bind_blob(stroke_stmt, 10, s->points, blob_size, SQLITE_TRANSIENT);
+
+            if (sqlite3_step(stroke_stmt) != SQLITE_DONE) {
+                fprintf(stderr, "db_save stroke %d/%d: %s\n", li, si, sqlite3_errmsg(db));
+                goto fail;
+            }
         }
     }
-    sqlite3_finalize(stmt);
+
+    sqlite3_finalize(layer_stmt);
+    sqlite3_finalize(stroke_stmt);
     sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
     return painting_id;
+
+fail:
+    sqlite3_finalize(layer_stmt);
+    sqlite3_finalize(stroke_stmt);
+    sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+    return -1;
 }
 
 // ── Load ──────────────────────────────────────────────────────────────────────
 
 bool db_load_painting(sqlite3 *db, int id,
-                      Stroke **out_strokes, int *out_count,
+                      Layer **out_layers, int *out_layer_count,
                       int *out_width, int *out_height) {
     // Fetch painting dimensions
     sqlite3_stmt *stmt;
@@ -183,43 +213,82 @@ bool db_load_painting(sqlite3 *db, int id,
     *out_height = sqlite3_column_int(stmt, 1);
     sqlite3_finalize(stmt);
 
-    // Fetch strokes ordered by stroke_idx
-    const char *sel_strokes =
-        "SELECT color_r, color_g, color_b, color_a, radius, tool, points "
-        "FROM strokes WHERE painting_id = ? ORDER BY stroke_idx ASC;";
-    if (sqlite3_prepare_v2(db, sel_strokes, -1, &stmt, NULL) != SQLITE_OK) return false;
+    // Fetch layers
+    const char *sel_layers =
+        "SELECT id, name, visible FROM layers WHERE painting_id = ? ORDER BY layer_idx ASC;";
+    if (sqlite3_prepare_v2(db, sel_layers, -1, &stmt, NULL) != SQLITE_OK) return false;
     sqlite3_bind_int(stmt, 1, id);
 
-    int capacity = 16, count = 0;
-    Stroke *list = malloc(capacity * sizeof(Stroke));
-    if (!list) { sqlite3_finalize(stmt); return false; }
+    int layer_cap = 8, lcount = 0;
+    Layer *layers = calloc(layer_cap, sizeof(Layer));
+    if (!layers) { sqlite3_finalize(stmt); return false; }
+
+    // Collect layer metadata
+    typedef struct { int db_id; } LayerInfo;
+    LayerInfo *infos = calloc(layer_cap, sizeof(LayerInfo));
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        if (count >= capacity) {
-            capacity *= 2;
-            Stroke *tmp = realloc(list, capacity * sizeof(Stroke));
-            if (!tmp) break;
-            list = tmp;
+        if (lcount >= layer_cap) {
+            layer_cap *= 2;
+            Layer *tmp = realloc(layers, layer_cap * sizeof(Layer));
+            LayerInfo *ti = realloc(infos, layer_cap * sizeof(LayerInfo));
+            if (!tmp || !ti) break;
+            layers = tmp;
+            infos  = ti;
         }
-        Stroke *s = &list[count++];
-        s->color.r = (unsigned char)sqlite3_column_int(stmt, 0);
-        s->color.g = (unsigned char)sqlite3_column_int(stmt, 1);
-        s->color.b = (unsigned char)sqlite3_column_int(stmt, 2);
-        s->color.a = (unsigned char)sqlite3_column_int(stmt, 3);
-        s->radius  = sqlite3_column_int(stmt, 4);
-        s->tool    = (ToolType)sqlite3_column_int(stmt, 5);
-
-        int blob_size = sqlite3_column_bytes(stmt, 6);
-        s->count    = blob_size / (int)sizeof(Vector2);
-        s->capacity = s->count;
-        s->points   = malloc(blob_size);
-        if (s->points)
-            memcpy(s->points, sqlite3_column_blob(stmt, 6), blob_size);
+        Layer *l = &layers[lcount];
+        memset(l, 0, sizeof(*l));
+        infos[lcount].db_id = sqlite3_column_int(stmt, 0);
+        const char *n = (const char *)sqlite3_column_text(stmt, 1);
+        snprintf(l->name, LAYER_NAME_LEN, "%s", n ? n : "Layer");
+        l->visible = sqlite3_column_int(stmt, 2) != 0;
+        lcount++;
     }
     sqlite3_finalize(stmt);
 
-    *out_strokes = list;
-    *out_count   = count;
+    // Fetch strokes for each layer
+    const char *sel_strokes =
+        "SELECT color_r, color_g, color_b, color_a, radius, tool, points "
+        "FROM strokes WHERE layer_id = ? ORDER BY stroke_idx ASC;";
+
+    for (int li = 0; li < lcount; li++) {
+        if (sqlite3_prepare_v2(db, sel_strokes, -1, &stmt, NULL) != SQLITE_OK) continue;
+        sqlite3_bind_int(stmt, 1, infos[li].db_id);
+
+        Layer *l = &layers[li];
+        int scap = 16;
+        l->strokes = malloc(scap * sizeof(Stroke));
+        l->stroke_count = 0;
+        l->stroke_capacity = scap;
+
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            if (l->stroke_count >= l->stroke_capacity) {
+                l->stroke_capacity *= 2;
+                Stroke *tmp = realloc(l->strokes, l->stroke_capacity * sizeof(Stroke));
+                if (!tmp) break;
+                l->strokes = tmp;
+            }
+            Stroke *s = &l->strokes[l->stroke_count++];
+            s->color.r = (unsigned char)sqlite3_column_int(stmt, 0);
+            s->color.g = (unsigned char)sqlite3_column_int(stmt, 1);
+            s->color.b = (unsigned char)sqlite3_column_int(stmt, 2);
+            s->color.a = (unsigned char)sqlite3_column_int(stmt, 3);
+            s->radius  = sqlite3_column_int(stmt, 4);
+            s->tool    = (ToolType)sqlite3_column_int(stmt, 5);
+
+            int blob_size = sqlite3_column_bytes(stmt, 6);
+            s->count    = blob_size / (int)sizeof(Vector2);
+            s->capacity = s->count;
+            s->points   = malloc(blob_size);
+            if (s->points)
+                memcpy(s->points, sqlite3_column_blob(stmt, 6), blob_size);
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    free(infos);
+    *out_layers      = layers;
+    *out_layer_count = lcount;
     return true;
 }
 
@@ -264,15 +333,18 @@ bool db_list_paintings(sqlite3 *db, PaintingMeta **out_list, int *out_count) {
 
 void db_free_list(PaintingMeta *list) { free(list); }
 
-void db_free_strokes(Stroke *strokes, int count) {
-    for (int i = 0; i < count; i++) free(strokes[i].points);
-    free(strokes);
+void db_free_layers(Layer *layers, int count) {
+    for (int i = 0; i < count; i++) {
+        for (int s = 0; s < layers[i].stroke_count; s++)
+            free(layers[i].strokes[s].points);
+        free(layers[i].strokes);
+    }
+    free(layers);
 }
 
 // ── Delete ────────────────────────────────────────────────────────────────────
 
 bool db_delete_painting(sqlite3 *db, int id) {
-    // CASCADE handles strokes; need foreign_keys ON (set at open)
     sqlite3_exec(db, "PRAGMA foreign_keys = ON;", NULL, NULL, NULL);
     sqlite3_stmt *stmt;
     if (sqlite3_prepare_v2(db, "DELETE FROM paintings WHERE id = ?;",

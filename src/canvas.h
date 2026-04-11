@@ -12,7 +12,10 @@
 #define CANVAS_DOC_H   4096
 #define MINIMAP_SIZE   160    // minimap thumbnail (square, matches square doc)
 
-// One continuous brush stroke (mouse-down → mouse-up).
+#define MAX_LAYERS      32
+#define LAYER_NAME_LEN  32
+
+// One continuous brush stroke (mouse-down -> mouse-up).
 // Points are raw mouse samples; rendering interpolates between them.
 typedef struct {
     Vector2 *points;
@@ -24,13 +27,23 @@ typedef struct {
 } Stroke;
 
 typedef struct {
+    char     name[LAYER_NAME_LEN];
+    Stroke  *strokes;
+    int      stroke_count;
+    int      stroke_capacity;
+    bool     visible;
+} Layer;
+
+typedef struct Canvas {
     RenderTexture2D rt;
     RenderTexture2D minimap_rt;  // thumbnail of full document at MINIMAP_SIZE scale
     Texture2D       paper_tex;   // tileable paper grain texture
     int     width, height;
-    Stroke *strokes;         // committed strokes
-    int     stroke_count;
-    int     stroke_capacity;
+
+    Layer   layers[MAX_LAYERS];
+    int     layer_count;
+    int     active_layer;        // index into layers[]
+
     Stroke  current;         // stroke being built right now
     bool    is_drawing;
     bool    dirty;           // unsaved changes
@@ -48,8 +61,8 @@ void canvas_end_stroke(Canvas *c);
 void canvas_undo(Canvas *c);
 void canvas_clear(Canvas *c);
 
-// Load strokes from DB (takes ownership of the array)
-void canvas_load_strokes(Canvas *c, Stroke *strokes, int count);
+// Load layers from DB (takes ownership of the layers array)
+void canvas_load_layers(Canvas *c, Layer *layers, int layer_count);
 
 // Re-render all strokes at the current zoom/pan — call after any view change
 void canvas_redraw_for_view(Canvas *c);
@@ -61,3 +74,11 @@ void canvas_resize(Canvas *c, int panel_w, int panel_h);
 void canvas_draw_minimap(const Canvas *c, float alpha);
 
 void canvas_draw(const Canvas *c);
+
+// Layer management
+int  canvas_add_layer(Canvas *c);                          // returns index or -1
+void canvas_delete_layer(Canvas *c, int idx);
+void canvas_set_active_layer(Canvas *c, int idx);
+void canvas_toggle_layer_visible(Canvas *c, int idx);
+void canvas_rename_layer(Canvas *c, int idx, const char *name);
+void canvas_move_layer(Canvas *c, int from, int to);

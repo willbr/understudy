@@ -44,7 +44,7 @@ int main(void) {
                           GetScreenHeight());
 
         if (app.ui.mode == UI_NONE) {
-            ToolbarEvents ev = toolbar_update(&app.tools);
+            ToolbarEvents ev = toolbar_update(&app.tools, &app.canvas);
 
             // Toolbar button actions
             if (ev.wants_new) {
@@ -168,12 +168,14 @@ int main(void) {
             ClearBackground((Color){25, 25, 25, 255});
 
             canvas_draw(&app.canvas);
-            toolbar_draw(&app.tools);
+            toolbar_draw(&app.tools, &app.canvas);
 
-            // Status line: stroke count + zoom level
-            char sc[64];
-            snprintf(sc, sizeof(sc), "%d strokes  %d%%",
-                     app.canvas.stroke_count,
+            // Status line: layer + zoom
+            char sc[96];
+            snprintf(sc, sizeof(sc), "Layer %d/%d  %d strokes  %d%%",
+                     app.canvas.active_layer + 1,
+                     app.canvas.layer_count,
+                     app.canvas.layers[app.canvas.active_layer].stroke_count,
                      (int)(app.canvas.zoom * 100.0f + 0.5f));
             DrawText(sc, 10, GetScreenHeight() - 20, 12, (Color){100, 100, 100, 255});
 

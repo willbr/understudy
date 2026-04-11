@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 // ── Paper texture ────────────────────────────────────────────────────────────
 
@@ -19,12 +20,11 @@ static Texture2D gen_paper_texture(void) {
     Color *px = (Color *)img.data;
     for (int y = 0; y < PAPER_TILE; y++) {
         for (int x = 0; x < PAPER_TILE; x++) {
-            int n1 = (int)(paper_hash(x, y) % 12) - 6;           // fine grain
-            int n2 = (int)(paper_hash(x / 4, y / 4 + 997) % 6) - 3; // coarser
+            int n1 = (int)(paper_hash(x, y) % 12) - 6;
+            int n2 = (int)(paper_hash(x / 4, y / 4 + 997) % 6) - 3;
             int v  = 244 + n1 + n2;
             if (v < 228) v = 228;
             if (v > 255) v = 255;
-            // Slightly warm tint (blue channel a touch lower)
             px[y * PAPER_TILE + x] = (Color){
                 (unsigned char)v,
                 (unsigned char)v,
@@ -39,7 +39,6 @@ static Texture2D gen_paper_texture(void) {
     return tex;
 }
 
-// Draw paper background covering the document area at the given transform.
 static void draw_paper(const Canvas *c, float vx, float vy, float zoom) {
     Rectangle src  = {0, 0, (float)CANVAS_DOC_W, (float)CANVAS_DOC_H};
     Rectangle dest = {vx, vy, (float)CANVAS_DOC_W * zoom,
@@ -56,21 +55,35 @@ static void stroke_free_data(Stroke *s) {
     s->capacity = 0;
 }
 
-// Render one stroke into the current BeginTextureMode target, applying the
-// view transform so circles are drawn at display resolution (not at 1:1 doc
-// resolution that then gets scaled).  All coordinates are in viewport space.
+static void layer_free(Layer *l) {
+    for (int i = 0; i < l->stroke_count; i++)
+        stroke_free_data(&l->strokes[i]);
+    free(l->strokes);
+    l->strokes         = NULL;
+    l->stroke_count    = 0;
+    l->stroke_capacity = 0;
+}
+
+static void layer_init(Layer *l, const char *name) {
+    memset(l, 0, sizeof(*l));
+    snprintf(l->name, LAYER_NAME_LEN, "%s", name);
+    l->visible = true;
+}
+
+static Layer *active_layer(Canvas *c) {
+    return &c->layers[c->active_layer];
+}
+
 static void render_stroke_transformed(const Stroke *s,
                                       float vx, float vy, float zoom) {
     if (s->count == 0) return;
     Color color = (s->tool == TOOL_ERASER) ? WHITE : s->color;
     float r = fmaxf(1.0f, (float)s->radius * zoom);
 
-    // First point
     float sx0 = s->points[0].x * zoom + vx;
     float sy0 = s->points[0].y * zoom + vy;
     DrawCircleV((Vector2){sx0, sy0}, r, color);
 
-    // Interpolate between consecutive samples in screen space
     for (int i = 1; i < s->count; i++) {
         float fsx = s->points[i - 1].x * zoom + vx;
         float fsy = s->points[i - 1].y * zoom + vy;
@@ -87,25 +100,32 @@ static void render_stroke_transformed(const Stroke *s,
     }
 }
 
-// Full re-render of all committed strokes at the current view transform.
+// Full re-render of all visible layers at the current view transform.
 static void redraw_all(Canvas *c) {
     BeginTextureMode(c->rt);
-    ClearBackground((Color){45, 45, 45, 255});   // dark outside document bounds
+    ClearBackground((Color){45, 45, 45, 255});
     draw_paper(c, c->view_x, c->view_y, c->zoom);
-    for (int i = 0; i < c->stroke_count; i++)
-        render_stroke_transformed(&c->strokes[i], c->view_x, c->view_y, c->zoom);
+    for (int li = 0; li < c->layer_count; li++) {
+        if (!c->layers[li].visible) continue;
+        Layer *l = &c->layers[li];
+        for (int si = 0; si < l->stroke_count; si++)
+            render_stroke_transformed(&l->strokes[si],
+                                      c->view_x, c->view_y, c->zoom);
+    }
     EndTextureMode();
 }
 
-// Re-render all strokes to the minimap at doc→minimap scale.
-// Called after any stroke list change (end, undo, clear, load) — not every frame.
 static void update_minimap(Canvas *c) {
     float ms = (float)MINIMAP_SIZE / (float)CANVAS_DOC_W;
     BeginTextureMode(c->minimap_rt);
     ClearBackground((Color){45, 45, 45, 255});
     draw_paper(c, 0.0f, 0.0f, ms);
-    for (int i = 0; i < c->stroke_count; i++)
-        render_stroke_transformed(&c->strokes[i], 0.0f, 0.0f, ms);
+    for (int li = 0; li < c->layer_count; li++) {
+        if (!c->layers[li].visible) continue;
+        Layer *l = &c->layers[li];
+        for (int si = 0; si < l->stroke_count; si++)
+            render_stroke_transformed(&l->strokes[si], 0.0f, 0.0f, ms);
+    }
     EndTextureMode();
 }
 
@@ -117,6 +137,14 @@ static void reset_view(Canvas *c) {
     c->view_y = -(CANVAS_DOC_H - ph) / 2.0f;
 }
 
+// Total stroke count across all layers (for status display)
+static int total_strokes(const Canvas *c) {
+    int n = 0;
+    for (int i = 0; i < c->layer_count; i++)
+        n += c->layers[i].stroke_count;
+    return n;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 void canvas_init(Canvas *c) {
@@ -125,13 +153,14 @@ void canvas_init(Canvas *c) {
 
     c->paper_tex = gen_paper_texture();
 
-    // RT is viewport-sized so strokes are always drawn at display resolution
     c->rt = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
     c->minimap_rt = LoadRenderTexture(MINIMAP_SIZE, MINIMAP_SIZE);
 
-    c->strokes         = NULL;
-    c->stroke_count    = 0;
-    c->stroke_capacity = 0;
+    memset(c->layers, 0, sizeof(c->layers));
+    c->layer_count  = 1;
+    c->active_layer = 0;
+    layer_init(&c->layers[0], "Background");
+
     memset(&c->current, 0, sizeof(c->current));
     c->is_drawing = false;
     c->dirty      = false;
@@ -145,8 +174,8 @@ void canvas_free(Canvas *c) {
     UnloadTexture(c->paper_tex);
     UnloadRenderTexture(c->minimap_rt);
     UnloadRenderTexture(c->rt);
-    for (int i = 0; i < c->stroke_count; i++) stroke_free_data(&c->strokes[i]);
-    free(c->strokes);
+    for (int i = 0; i < c->layer_count; i++)
+        layer_free(&c->layers[i]);
     stroke_free_data(&c->current);
 }
 
@@ -171,7 +200,6 @@ void canvas_add_point(Canvas *c, Vector2 p) {
     }
     s->points[s->count++] = p;
 
-    // Render incremental segment at display resolution using current transform
     Color color = (s->tool == TOOL_ERASER) ? WHITE : s->color;
     float r  = fmaxf(1.0f, (float)s->radius * c->zoom);
     float sx = p.x * c->zoom + c->view_x;
@@ -203,16 +231,18 @@ void canvas_end_stroke(Canvas *c) {
         stroke_free_data(&c->current);
         return;
     }
-    if (c->stroke_count >= c->stroke_capacity) {
-        int newcap = c->stroke_capacity == 0 ? 16 : c->stroke_capacity * 2;
-        Stroke *tmp = realloc(c->strokes, newcap * sizeof(Stroke));
+    Layer *l = active_layer(c);
+    if (l->stroke_count >= l->stroke_capacity) {
+        int newcap = l->stroke_capacity == 0 ? 16 : l->stroke_capacity * 2;
+        Stroke *tmp = realloc(l->strokes, newcap * sizeof(Stroke));
         if (!tmp) { c->is_drawing = false; return; }
-        c->strokes         = tmp;
-        c->stroke_capacity = newcap;
+        l->strokes         = tmp;
+        l->stroke_capacity = newcap;
     }
-    c->strokes[c->stroke_count++] = c->current;
+    l->strokes[l->stroke_count++] = c->current;
     memset(&c->current, 0, sizeof(c->current));
     c->is_drawing = false;
+    redraw_all(c);      // ensure correct layer compositing order
     update_minimap(c);
 }
 
@@ -224,16 +254,21 @@ void canvas_undo(Canvas *c) {
         update_minimap(c);
         return;
     }
-    if (c->stroke_count == 0) return;
-    stroke_free_data(&c->strokes[--c->stroke_count]);
+    Layer *l = active_layer(c);
+    if (l->stroke_count == 0) return;
+    stroke_free_data(&l->strokes[--l->stroke_count]);
     redraw_all(c);
     update_minimap(c);
-    c->dirty = (c->stroke_count > 0);
+    c->dirty = (total_strokes(c) > 0);
 }
 
 void canvas_clear(Canvas *c) {
-    for (int i = 0; i < c->stroke_count; i++) stroke_free_data(&c->strokes[i]);
-    c->stroke_count = 0;
+    for (int i = 0; i < c->layer_count; i++)
+        layer_free(&c->layers[i]);
+    c->layer_count  = 1;
+    c->active_layer = 0;
+    layer_init(&c->layers[0], "Background");
+
     stroke_free_data(&c->current);
     c->is_drawing = false;
     c->dirty      = false;
@@ -243,24 +278,27 @@ void canvas_clear(Canvas *c) {
     update_minimap(c);
 }
 
-void canvas_load_strokes(Canvas *c, Stroke *strokes, int count) {
-    for (int i = 0; i < c->stroke_count; i++) stroke_free_data(&c->strokes[i]);
-    free(c->strokes);
+void canvas_load_layers(Canvas *c, Layer *layers, int layer_count) {
+    for (int i = 0; i < c->layer_count; i++)
+        layer_free(&c->layers[i]);
     stroke_free_data(&c->current);
     c->is_drawing = false;
 
-    c->strokes         = strokes;
-    c->stroke_count    = count;
-    c->stroke_capacity = count;
-    c->dirty           = false;
+    // Copy layers into the fixed array
+    int count = layer_count < MAX_LAYERS ? layer_count : MAX_LAYERS;
+    for (int i = 0; i < count; i++)
+        c->layers[i] = layers[i];
+    c->layer_count  = count;
+    c->active_layer = 0;
+    c->dirty        = false;
+
+    free(layers);  // free the container (layer contents now owned by c->layers[])
 
     reset_view(c);
     redraw_all(c);
     update_minimap(c);
 }
 
-// Called from main whenever zoom or pan changes — re-renders all strokes at
-// the new view transform so they stay crisp at any zoom level.
 void canvas_redraw_for_view(Canvas *c) {
     redraw_all(c);
 }
@@ -277,23 +315,19 @@ void canvas_draw_minimap(const Canvas *c, float alpha) {
     int panel_w = c->rt.texture.width;
     int panel_h = c->rt.texture.height;
 
-    // Bottom-right of canvas panel
     int mx = CANVAS_X + panel_w - MINIMAP_SIZE - 12;
     int my = panel_h - MINIMAP_SIZE - 12;
 
-    // Dark background with border
     DrawRectangle(mx - 2, my - 2, MINIMAP_SIZE + 4, MINIMAP_SIZE + 4,
                   Fade((Color){15, 15, 15, 210}, alpha));
     DrawRectangleLines(mx - 2, my - 2, MINIMAP_SIZE + 4, MINIMAP_SIZE + 4,
                        Fade((Color){80, 80, 80, 255}, alpha));
 
-    // Thumbnail (Y-flipped per RenderTexture convention)
     Rectangle src  = {0, 0, MINIMAP_SIZE, -(float)MINIMAP_SIZE};
     Rectangle dest = {(float)mx, (float)my, MINIMAP_SIZE, MINIMAP_SIZE};
     DrawTexturePro(c->minimap_rt.texture, src, dest,
                    (Vector2){0, 0}, 0.0f, Fade(WHITE, alpha));
 
-    // Viewport indicator: which portion of the doc is currently visible
     float ms    = (float)MINIMAP_SIZE / (float)CANVAS_DOC_W;
     float vp_x  = (-c->view_x / c->zoom) * ms;
     float vp_y  = (-c->view_y / c->zoom) * ms;
@@ -310,13 +344,10 @@ void canvas_draw(const Canvas *c) {
     int pw = c->rt.texture.width;
     int ph = c->rt.texture.height;
 
-    // The RT is viewport-sized with the transform already baked in.
-    // Draw it at the panel origin (Y-flipped per RenderTexture convention).
     Rectangle src  = {0, 0, (float)pw, -(float)ph};
     Rectangle dest = {CANVAS_X, CANVAS_Y, (float)pw, (float)ph};
     DrawTexturePro(c->rt.texture, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
 
-    // Document boundary — only visible when panned near the edge
     float bx = CANVAS_X + c->view_x;
     float by = CANVAS_Y + c->view_y;
     float bw = (float)c->width  * c->zoom;
@@ -325,4 +356,84 @@ void canvas_draw(const Canvas *c) {
     DrawRectangleLinesEx((Rectangle){bx, by, bw, bh}, 1.0f,
                          (Color){90, 90, 90, 180});
     EndScissorMode();
+}
+
+// ── Layer management ─────────────────────────────────────────────────────────
+
+int canvas_add_layer(Canvas *c) {
+    if (c->layer_count >= MAX_LAYERS) return -1;
+
+    // Insert above active layer
+    int idx = c->active_layer + 1;
+    memmove(&c->layers[idx + 1], &c->layers[idx],
+            (c->layer_count - idx) * sizeof(Layer));
+    c->layer_count++;
+
+    char name[LAYER_NAME_LEN];
+    snprintf(name, sizeof(name), "Layer %d", c->layer_count);
+    layer_init(&c->layers[idx], name);
+
+    c->active_layer = idx;
+    c->dirty = true;
+    return idx;
+}
+
+void canvas_delete_layer(Canvas *c, int idx) {
+    if (c->layer_count <= 1) return;
+    if (idx < 0 || idx >= c->layer_count) return;
+
+    layer_free(&c->layers[idx]);
+    memmove(&c->layers[idx], &c->layers[idx + 1],
+            (c->layer_count - idx - 1) * sizeof(Layer));
+    c->layer_count--;
+
+    if (c->active_layer >= c->layer_count)
+        c->active_layer = c->layer_count - 1;
+    if (c->active_layer > idx && c->active_layer > 0)
+        c->active_layer--;
+
+    c->dirty = true;
+    redraw_all(c);
+    update_minimap(c);
+}
+
+void canvas_set_active_layer(Canvas *c, int idx) {
+    if (idx >= 0 && idx < c->layer_count)
+        c->active_layer = idx;
+}
+
+void canvas_toggle_layer_visible(Canvas *c, int idx) {
+    if (idx < 0 || idx >= c->layer_count) return;
+    c->layers[idx].visible = !c->layers[idx].visible;
+    redraw_all(c);
+    update_minimap(c);
+}
+
+void canvas_rename_layer(Canvas *c, int idx, const char *name) {
+    if (idx < 0 || idx >= c->layer_count) return;
+    snprintf(c->layers[idx].name, LAYER_NAME_LEN, "%s", name);
+}
+
+void canvas_move_layer(Canvas *c, int from, int to) {
+    if (from < 0 || from >= c->layer_count) return;
+    if (to < 0 || to >= c->layer_count) return;
+    if (from == to) return;
+
+    Layer tmp = c->layers[from];
+    if (from < to) {
+        memmove(&c->layers[from], &c->layers[from + 1],
+                (to - from) * sizeof(Layer));
+    } else {
+        memmove(&c->layers[to + 1], &c->layers[to],
+                (from - to) * sizeof(Layer));
+    }
+    c->layers[to] = tmp;
+
+    // Track active layer
+    if (c->active_layer == from)
+        c->active_layer = to;
+
+    c->dirty = true;
+    redraw_all(c);
+    update_minimap(c);
 }

@@ -58,7 +58,7 @@ static void save_dialog_update(UIState *u, Canvas *canvas, sqlite3 *db) {
     if (IsKeyPressed(KEY_ENTER) || ui_button(r_ok, "Save")) {
         if (u->text_len > 0) {
             db_save_painting(db, u->text_input,
-                             canvas->strokes, canvas->stroke_count,
+                             canvas->layers, canvas->layer_count,
                              canvas->width, canvas->height);
             canvas->dirty = false;
             u->mode = UI_NONE;
@@ -133,11 +133,11 @@ static void load_list_update(UIState *u, Canvas *canvas, sqlite3 *db) {
     if (ui_button(r_open, "Open") && u->load_selected >= 0 &&
         u->load_selected < u->load_count) {
         PaintingMeta *m = &u->load_list[u->load_selected];
-        Stroke *strokes = NULL;
-        int count = 0, w = 0, h = 0;
-        if (db_load_painting(db, m->id, &strokes, &count, &w, &h)) {
-            canvas_load_strokes(canvas, strokes, count);
-            // canvas_load_strokes takes ownership; no free needed here
+        Layer *layers = NULL;
+        int lcount = 0, w = 0, h = 0;
+        if (db_load_painting(db, m->id, &layers, &lcount, &w, &h)) {
+            canvas_load_layers(canvas, layers, lcount);
+            // canvas_load_layers takes ownership; no free needed here
         }
         ui_free(u);
         u->mode = UI_NONE;

@@ -20,9 +20,16 @@
 #define Y_RGB_G      360
 #define Y_RGB_B      392
 #define Y_PREVIEW    430
-#define Y_BTN_NEW    490
-#define Y_BTN_SAVE   530
-#define Y_BTN_LOAD   570
+#define Y_BTN_NEW    470
+#define Y_BTN_SAVE   505
+#define Y_BTN_LOAD   540
+
+// Layer panel
+#define Y_LAYER_LABEL  580
+#define Y_LAYER_LIST   598
+#define LAYER_ROW_H     24
+#define MAX_VISIBLE_LAYERS 5
+#define Y_LAYER_BTNS   (Y_LAYER_LIST + MAX_VISIBLE_LAYERS * LAYER_ROW_H + 4)
 
 #define SWATCH_COLS  4
 #define SWATCH_ROWS  3
@@ -30,7 +37,7 @@
 #define SWATCH_GAP    5
 
 #define SLIDER_H     16
-#define BTN_H        32
+#define BTN_H        28
 
 // Fixed 12-color palette
 static const Color PALETTE[12] = {
@@ -54,27 +61,20 @@ static bool button(Rectangle r, const char *label, bool active) {
     return hovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 }
 
-// Returns the new value (0..max) after handling mouse interaction.
-static int slider(Rectangle r, int value, int max_val, Color fill) {
-    DrawRectangleRec(r, (Color){50, 50, 50, 255});
-    // Filled portion
-    float ratio = (float)value / (float)max_val;
-    DrawRectangle((int)r.x, (int)r.y, (int)(r.width * ratio), (int)r.height, fill);
-    DrawRectangleLinesEx(r, 1, (Color){120, 120, 120, 255});
-
-    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) &&
-        CheckCollisionPointRec(GetMousePosition(), r)) {
-        float t = (GetMousePosition().x - r.x) / r.width;
-        if (t < 0.0f) t = 0.0f;
-        if (t > 1.0f) t = 1.0f;
-        value = (int)(t * max_val + 0.5f);
-    }
-    return value;
+static bool small_button(Rectangle r, const char *label) {
+    bool hovered = CheckCollisionPointRec(GetMousePosition(), r);
+    Color bg = hovered ? (Color){80, 80, 80, 255} : (Color){55, 55, 55, 255};
+    DrawRectangleRec(r, bg);
+    DrawRectangleLinesEx(r, 1, (Color){100, 100, 100, 255});
+    int fw = MeasureText(label, 12);
+    DrawText(label, (int)(r.x + r.width / 2 - fw / 2),
+             (int)(r.y + r.height / 2 - 6), 12, WHITE);
+    return hovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-void toolbar_draw(const ToolState *t) {
+void toolbar_draw(const ToolState *t, const Canvas *c) {
     // Background
     DrawRectangle(0, 0, TB_W, TB_H, (Color){40, 40, 40, 255});
     DrawLine(TB_W, 0, TB_W, TB_H, (Color){70, 70, 70, 255});
@@ -97,7 +97,6 @@ void toolbar_draw(const ToolState *t) {
     snprintf(size_label, sizeof(size_label), "Size: %d", t->brush_radius);
     DrawText(size_label, TB_PAD, Y_SIZE_LABEL, 13, LIGHTGRAY);
     Rectangle r_size = {TB_PAD, Y_SIZE_SLIDER, TB_INNER, SLIDER_H};
-    // Draw filled slider (visual only here; interaction in toolbar_update)
     DrawRectangleRec(r_size, (Color){50, 50, 50, 255});
     float ratio = (float)(t->brush_radius - 1) / 49.0f;
     DrawRectangle((int)r_size.x, (int)r_size.y,
@@ -116,7 +115,6 @@ void toolbar_draw(const ToolState *t) {
             SWATCH_SIZE, SWATCH_SIZE
         };
         DrawRectangleRec(sr, PALETTE[i]);
-        // Highlight active swatch
         if (t->active_tool == TOOL_BRUSH &&
             t->draw_color.r == PALETTE[i].r &&
             t->draw_color.g == PALETTE[i].g &&
@@ -151,7 +149,6 @@ void toolbar_draw(const ToolState *t) {
                   (Color){60, 80, 200, 255});
     DrawRectangleLinesEx(r_b, 1, GRAY);
 
-    // RGB value labels
     char rv[8], gv[8], bv[8];
     snprintf(rv, sizeof(rv), "%3d", t->draw_color.r);
     snprintf(gv, sizeof(gv), "%3d", t->draw_color.g);
@@ -169,15 +166,48 @@ void toolbar_draw(const ToolState *t) {
     button((Rectangle){TB_PAD, Y_BTN_NEW,  TB_INNER, BTN_H}, "New Canvas", false);
     button((Rectangle){TB_PAD, Y_BTN_SAVE, TB_INNER, BTN_H}, "Save",       false);
     button((Rectangle){TB_PAD, Y_BTN_LOAD, TB_INNER, BTN_H}, "Load",       false);
+
+    // ── Layer panel ──────────────────────────────────────────────────────────
+    DrawText("Layers", TB_PAD, Y_LAYER_LABEL, 13, LIGHTGRAY);
+
+    // Draw layer rows (bottom layer = index 0 at the bottom of the list)
+    int visible = c->layer_count < MAX_VISIBLE_LAYERS ? c->layer_count : MAX_VISIBLE_LAYERS;
+    for (int i = 0; i < visible; i++) {
+        // Show layers top-down: highest index at top of list
+        int li = c->layer_count - 1 - i;
+        float ry = Y_LAYER_LIST + i * LAYER_ROW_H;
+        Rectangle row = {TB_PAD, ry, TB_INNER, LAYER_ROW_H - 2};
+
+        Color bg = (li == c->active_layer)
+                   ? (Color){50, 70, 120, 255}
+                   : (Color){50, 50, 50, 255};
+        DrawRectangleRec(row, bg);
+        DrawRectangleLinesEx(row, 1, (Color){70, 70, 70, 255});
+
+        // Visibility indicator
+        const char *vis = c->layers[li].visible ? "O" : "-";
+        DrawText(vis, (int)row.x + 4, (int)ry + 5, 12,
+                 c->layers[li].visible ? GREEN : (Color){80, 80, 80, 255});
+
+        // Layer name
+        DrawText(c->layers[li].name, (int)row.x + 20, (int)ry + 5, 12, WHITE);
+    }
+
+    // Layer buttons
+    float by = Y_LAYER_BTNS;
+    float bw = (TB_INNER - 12) / 4.0f;
+    small_button((Rectangle){TB_PAD,             by, bw, 20}, "+");
+    small_button((Rectangle){TB_PAD + bw + 4,    by, bw, 20}, "-");
+    small_button((Rectangle){TB_PAD + 2*(bw+4),  by, bw, 20}, "^");
+    small_button((Rectangle){TB_PAD + 3*(bw+4),  by, bw, 20}, "v");
 }
 
-ToolbarEvents toolbar_update(ToolState *t) {
+ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
     ToolbarEvents ev = {false, false, false};
     Vector2 mouse = GetMousePosition();
     bool ldown    = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
     bool lpress   = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 
-    // Only handle input if mouse is in the toolbar area
     if (mouse.x > TB_W) return ev;
 
     // Tool buttons
@@ -239,6 +269,40 @@ ToolbarEvents toolbar_update(ToolState *t) {
     if (lpress && CheckCollisionPointRec(mouse, (Rectangle){TB_PAD, Y_BTN_LOAD, TB_INNER, BTN_H}))
         ev.wants_load = true;
 
+    // ── Layer panel interaction ──────────────────────────────────────────────
+    if (lpress) {
+        int visible = c->layer_count < MAX_VISIBLE_LAYERS ? c->layer_count : MAX_VISIBLE_LAYERS;
+        for (int i = 0; i < visible; i++) {
+            int li = c->layer_count - 1 - i;
+            float ry = Y_LAYER_LIST + i * LAYER_ROW_H;
+            Rectangle row = {TB_PAD, ry, TB_INNER, LAYER_ROW_H - 2};
+            if (CheckCollisionPointRec(mouse, row)) {
+                // Click on visibility toggle area (first 18px)
+                if (mouse.x < TB_PAD + 18) {
+                    canvas_toggle_layer_visible(c, li);
+                } else {
+                    canvas_set_active_layer(c, li);
+                }
+            }
+        }
+
+        // Layer buttons: + - ^ v
+        float btn_y = Y_LAYER_BTNS;
+        float bw = (TB_INNER - 12) / 4.0f;
+        Rectangle r_add  = {TB_PAD,             btn_y, bw, 20};
+        Rectangle r_del  = {TB_PAD + bw + 4,    btn_y, bw, 20};
+        Rectangle r_up   = {TB_PAD + 2*(bw+4),  btn_y, bw, 20};
+        Rectangle r_down = {TB_PAD + 3*(bw+4),  btn_y, bw, 20};
+
+        if (CheckCollisionPointRec(mouse, r_add))
+            canvas_add_layer(c);
+        if (CheckCollisionPointRec(mouse, r_del))
+            canvas_delete_layer(c, c->active_layer);
+        if (CheckCollisionPointRec(mouse, r_up))
+            canvas_move_layer(c, c->active_layer, c->active_layer + 1);
+        if (CheckCollisionPointRec(mouse, r_down))
+            canvas_move_layer(c, c->active_layer, c->active_layer - 1);
+    }
+
     return ev;
-    (void)slider; // suppress unused-function warning
 }
