@@ -10,6 +10,8 @@ typedef struct {
     bool wants_save;
     bool wants_load;
     bool wants_export;
+    bool wants_crop;
+    bool wants_resize;
 } ToolbarEvents;
 
 void toolbar_draw(const ToolState *t, const Canvas *c);

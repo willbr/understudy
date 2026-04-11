@@ -67,6 +67,12 @@ void canvas_load_layers(Canvas *c, Layer *layers, int layer_count);
 // Export the full document as a PNG file at 1:1 resolution
 bool canvas_export_png(Canvas *c, const char *path);
 
+// Crop the document to the given rectangle (document-space coordinates)
+void canvas_crop(Canvas *c, int x, int y, int w, int h);
+
+// Resize the document, scaling all strokes proportionally
+void canvas_resize_doc(Canvas *c, int new_w, int new_h);
+
 // Re-render all strokes at the current zoom/pan — call after any view change
 void canvas_redraw_for_view(Canvas *c);
 

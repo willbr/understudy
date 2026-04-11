@@ -1,5 +1,6 @@
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 #include "raylib.h"
 #include "canvas.h"
 #include "tools.h"
@@ -97,6 +98,22 @@ int main(void) {
                 app.ui.mode           = UI_EXPORT_DIALOG;
                 app.ui.text_len       = 0;
                 app.ui.text_input[0]  = '\0';
+                app.ui.cursor_blink_t = 0.0f;
+            }
+            if (ev.wants_crop) {
+                app.ui.mode = UI_CROP_MODE;
+                app.ui.crop_dragging   = false;
+                app.ui.crop_rect_valid = false;
+            }
+            if (ev.wants_resize) {
+                app.ui.mode = UI_RESIZE_DIALOG;
+                snprintf(app.ui.resize_w_buf, 16, "%d", app.canvas.width);
+                app.ui.resize_w_len = (int)strlen(app.ui.resize_w_buf);
+                snprintf(app.ui.resize_h_buf, 16, "%d", app.canvas.height);
+                app.ui.resize_h_len = (int)strlen(app.ui.resize_h_buf);
+                app.ui.resize_lock_aspect = true;
+                app.ui.resize_active_field = 0;
+                app.ui.resize_aspect = (float)app.canvas.width / (float)app.canvas.height;
                 app.ui.cursor_blink_t = 0.0f;
             }
 
@@ -376,8 +393,8 @@ int main(void) {
 
             // Modals: immediate-mode (input + draw combined, inside BeginDrawing)
             if (app.ui.mode != UI_NONE) {
-                ui_update(&app.ui, &app.canvas, app.db);
-                ui_draw(&app.ui);
+                ui_update(&app.ui, &app.canvas, app.db, canvas_x);
+                ui_draw(&app.ui, &app.canvas, canvas_x);
             }
 
         EndDrawing();

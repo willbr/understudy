@@ -40,9 +40,9 @@ static Texture2D gen_paper_texture(void) {
 }
 
 static void draw_paper(const Canvas *c, float vx, float vy, float zoom) {
-    Rectangle src  = {0, 0, (float)CANVAS_DOC_W, (float)CANVAS_DOC_H};
-    Rectangle dest = {vx, vy, (float)CANVAS_DOC_W * zoom,
-                               (float)CANVAS_DOC_H * zoom};
+    Rectangle src  = {0, 0, (float)c->width, (float)c->height};
+    Rectangle dest = {vx, vy, (float)c->width * zoom,
+                               (float)c->height * zoom};
     DrawTexturePro(c->paper_tex, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
 }
 
@@ -116,7 +116,8 @@ static void redraw_all(Canvas *c) {
 }
 
 static void update_minimap(Canvas *c) {
-    float ms = (float)MINIMAP_SIZE / (float)CANVAS_DOC_W;
+    int max_dim = c->width > c->height ? c->width : c->height;
+    float ms = (float)MINIMAP_SIZE / (float)max_dim;
     BeginTextureMode(c->minimap_rt);
     ClearBackground((Color){45, 45, 45, 255});
     draw_paper(c, 0.0f, 0.0f, ms);
@@ -133,8 +134,8 @@ static void reset_view(Canvas *c) {
     int pw = c->rt.texture.width;
     int ph = c->rt.texture.height;
     c->zoom   = 1.0f;
-    c->view_x = -(CANVAS_DOC_W - pw) / 2.0f;
-    c->view_y = -(CANVAS_DOC_H - ph) / 2.0f;
+    c->view_x = -(c->width - pw) / 2.0f;
+    c->view_y = -(c->height - ph) / 2.0f;
 }
 
 // Total stroke count across all layers (for status display)
@@ -322,6 +323,82 @@ bool canvas_export_png(Canvas *c, const char *path) {
     return ok;
 }
 
+void canvas_crop(Canvas *c, int x, int y, int w, int h) {
+    if (c->is_drawing) canvas_end_stroke(c);
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x + w > c->width) w = c->width - x;
+    if (y + h > c->height) h = c->height - y;
+
+    // Offset all stroke points by the crop origin, then clip to new bounds
+    for (int li = 0; li < c->layer_count; li++) {
+        Layer *l = &c->layers[li];
+        int write = 0;
+        for (int si = 0; si < l->stroke_count; si++) {
+            Stroke *s = &l->strokes[si];
+            // Offset points
+            for (int pi = 0; pi < s->count; pi++) {
+                s->points[pi].x -= (float)x;
+                s->points[pi].y -= (float)y;
+            }
+            // Clip: keep only points inside new bounds
+            int pw = 0;
+            for (int pi = 0; pi < s->count; pi++) {
+                if (s->points[pi].x >= 0 && s->points[pi].x < w &&
+                    s->points[pi].y >= 0 && s->points[pi].y < h) {
+                    s->points[pw++] = s->points[pi];
+                }
+            }
+            s->count = pw;
+            if (pw == 0) {
+                stroke_free_data(s);
+            } else {
+                l->strokes[write++] = *s;
+            }
+        }
+        l->stroke_count = write;
+    }
+    c->width  = w;
+    c->height = h;
+    c->dirty  = true;
+    reset_view(c);
+    redraw_all(c);
+    update_minimap(c);
+}
+
+void canvas_resize_doc(Canvas *c, int new_w, int new_h) {
+    if (c->is_drawing) canvas_end_stroke(c);
+    if (new_w < 64) new_w = 64;
+    if (new_h < 64) new_h = 64;
+    if (new_w > 16384) new_w = 16384;
+    if (new_h > 16384) new_h = 16384;
+
+    float sx = (float)new_w / (float)c->width;
+    float sy = (float)new_h / (float)c->height;
+    float sr = (sx + sy) * 0.5f;  // average scale for brush radius
+
+    for (int li = 0; li < c->layer_count; li++) {
+        Layer *l = &c->layers[li];
+        for (int si = 0; si < l->stroke_count; si++) {
+            Stroke *s = &l->strokes[si];
+            for (int pi = 0; pi < s->count; pi++) {
+                s->points[pi].x *= sx;
+                s->points[pi].y *= sy;
+            }
+            s->radius = (int)(s->radius * sr + 0.5f);
+            if (s->radius < 1) s->radius = 1;
+        }
+    }
+    c->width  = new_w;
+    c->height = new_h;
+    c->dirty  = true;
+    reset_view(c);
+    redraw_all(c);
+    update_minimap(c);
+}
+
 void canvas_redraw_for_view(Canvas *c) {
     redraw_all(c);
 }
@@ -351,7 +428,8 @@ void canvas_draw_minimap(const Canvas *c, float alpha, int x_offset) {
     DrawTexturePro(c->minimap_rt.texture, src, dest,
                    (Vector2){0, 0}, 0.0f, Fade(WHITE, alpha));
 
-    float ms    = (float)MINIMAP_SIZE / (float)CANVAS_DOC_W;
+    int max_dim = c->width > c->height ? c->width : c->height;
+    float ms    = (float)MINIMAP_SIZE / (float)max_dim;
     float vp_x  = (-c->view_x / c->zoom) * ms;
     float vp_y  = (-c->view_y / c->zoom) * ms;
     float vp_w  = ((float)panel_w / c->zoom) * ms;
