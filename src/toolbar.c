@@ -79,6 +79,26 @@ static bool small_button(Rectangle r, const char *label) {
 
 // ── Scroll state ─────────────────────────────────────────────────────────────
 static int tb_scroll = 0;
+static int layer_scroll = 0;  // scroll offset for layer list
+
+// Draw a vertical scrollbar. Returns true if content is scrolled.
+static void draw_scrollbar(float x, float y, float height,
+                           int scroll, int content_h, int visible_h) {
+    if (content_h <= visible_h) return;  // no scrollbar needed
+
+    float bar_w = 4;
+    float track_h = height;
+    float thumb_h = (float)visible_h / (float)content_h * track_h;
+    if (thumb_h < 16) thumb_h = 16;
+    float thumb_y = y + (float)scroll / (float)(content_h - visible_h) * (track_h - thumb_h);
+
+    // Track
+    DrawRectangle((int)x, (int)y, (int)bar_w, (int)track_h,
+                  (Color){30, 30, 30, 150});
+    // Thumb
+    DrawRectangleRounded((Rectangle){x, thumb_y, bar_w, thumb_h}, 0.5f, 4,
+                         (Color){120, 120, 120, 200});
+}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -187,13 +207,24 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
     button((Rectangle){TB_PAD, Y_BTN_RESIZE, TB_INNER, BTN_H}, "Resize",     false);
 
     // ── Layer panel ──────────────────────────────────────────────────────────
-    DrawUI("Layers", TB_PAD, Y_LAYER_LABEL, 13, LIGHTGRAY);
+    {
+        char lbl[32];
+        snprintf(lbl, sizeof(lbl), "Layers (%d)", c->layer_count);
+        DrawUI(lbl, TB_PAD, Y_LAYER_LABEL, 13, LIGHTGRAY);
+    }
+
+    // Clamp layer scroll
+    int max_layer_scroll = c->layer_count - MAX_VISIBLE_LAYERS;
+    if (max_layer_scroll < 0) max_layer_scroll = 0;
+    if (layer_scroll > max_layer_scroll) layer_scroll = max_layer_scroll;
+    if (layer_scroll < 0) layer_scroll = 0;
 
     // Draw layer rows (bottom layer = index 0 at the bottom of the list)
     int visible = c->layer_count < MAX_VISIBLE_LAYERS ? c->layer_count : MAX_VISIBLE_LAYERS;
     for (int i = 0; i < visible; i++) {
-        // Show layers top-down: highest index at top of list
-        int li = c->layer_count - 1 - i;
+        // Show layers top-down: highest index at top of list, with scroll offset
+        int li = c->layer_count - 1 - i - layer_scroll;
+        if (li < 0 || li >= c->layer_count) continue;
         float ry = Y_LAYER_LIST + i * LAYER_ROW_H;
         Rectangle row = {TB_PAD, ry, TB_INNER, LAYER_ROW_H - 2};
 
@@ -212,6 +243,14 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
         DrawUI(c->layers[li].name, (int)row.x + 20, (int)ry + 5, 12, WHITE);
     }
 
+    // Scroll indicator
+    if (c->layer_count > MAX_VISIBLE_LAYERS) {
+        char sc[16];
+        snprintf(sc, sizeof(sc), "%d-%d/%d", layer_scroll + 1,
+                 layer_scroll + visible, c->layer_count);
+        DrawUI(sc, TB_PAD + TB_INNER - 60, Y_LAYER_LABEL, 11, (Color){80, 80, 80, 255});
+    }
+
     // Layer buttons
     float by = Y_LAYER_BTNS;
     float bw = (TB_INNER - 12) / 4.0f;
@@ -222,6 +261,22 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
 
     rlPopMatrix();
     EndScissorMode();
+
+    // Toolbar scrollbar (right edge, in screen space)
+    int tb_content_h = Y_LAYER_BTNS + 30;
+    int tb_visible_h = GetScreenHeight();
+    draw_scrollbar(TB_W - 6, 0, (float)tb_visible_h,
+                   tb_scroll, tb_content_h, tb_visible_h);
+
+    // Layer list scrollbar (inside the layer panel area)
+    if (c->layer_count > MAX_VISIBLE_LAYERS) {
+        int layer_content = c->layer_count * LAYER_ROW_H;
+        int layer_visible = MAX_VISIBLE_LAYERS * LAYER_ROW_H;
+        float lsb_x = TB_W - 8;
+        float lsb_y = Y_LAYER_LIST - tb_scroll;
+        draw_scrollbar(lsb_x, lsb_y, (float)layer_visible,
+                       layer_scroll * LAYER_ROW_H, layer_content, layer_visible);
+    }
 }
 
 ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
@@ -232,18 +287,30 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
 
     if (mouse.x > TB_W) return ev;
 
-    // Scroll toolbar with mouse wheel
-    float wheel = GetMouseWheelMove();
-    if (wheel != 0.0f) {
-        tb_scroll -= (int)(wheel * 30);
-        if (tb_scroll < 0) tb_scroll = 0;
-        int max_scroll = Y_LAYER_BTNS + 30 - GetScreenHeight();
-        if (max_scroll < 0) max_scroll = 0;
-        if (tb_scroll > max_scroll) tb_scroll = max_scroll;
-    }
-
     // Offset mouse Y for hit testing against scrolled content
     mouse.y += tb_scroll;
+
+    // Determine if mouse is over the layer list area (in scrolled coords)
+    Rectangle layer_area = {TB_PAD, Y_LAYER_LIST, TB_INNER,
+                            MAX_VISIBLE_LAYERS * LAYER_ROW_H};
+    bool over_layers = CheckCollisionPointRec(mouse, layer_area);
+
+    // Scroll: layer panel takes priority when hovered
+    float wheel = GetMouseWheelMove();
+    if (wheel != 0.0f) {
+        if (over_layers && c->layer_count > MAX_VISIBLE_LAYERS) {
+            layer_scroll -= (int)wheel;
+            int mls = c->layer_count - MAX_VISIBLE_LAYERS;
+            if (layer_scroll < 0) layer_scroll = 0;
+            if (layer_scroll > mls) layer_scroll = mls;
+        } else {
+            tb_scroll -= (int)(wheel * 30);
+            if (tb_scroll < 0) tb_scroll = 0;
+            int max_scroll = Y_LAYER_BTNS + 30 - GetScreenHeight();
+            if (max_scroll < 0) max_scroll = 0;
+            if (tb_scroll > max_scroll) tb_scroll = max_scroll;
+        }
+    }
 
     // Tool buttons
     Rectangle r_brush  = {TB_PAD,       Y_TOOLS, 60, 30};
@@ -313,14 +380,15 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
         ev.wants_resize = true;
 
     // ── Layer panel interaction ──────────────────────────────────────────────
+
     if (lpress) {
         int visible = c->layer_count < MAX_VISIBLE_LAYERS ? c->layer_count : MAX_VISIBLE_LAYERS;
         for (int i = 0; i < visible; i++) {
-            int li = c->layer_count - 1 - i;
+            int li = c->layer_count - 1 - i - layer_scroll;
+            if (li < 0 || li >= c->layer_count) continue;
             float ry = Y_LAYER_LIST + i * LAYER_ROW_H;
             Rectangle row = {TB_PAD, ry, TB_INNER, LAYER_ROW_H - 2};
             if (CheckCollisionPointRec(mouse, row)) {
-                // Click on visibility toggle area (first 18px)
                 if (mouse.x < TB_PAD + 18) {
                     canvas_toggle_layer_visible(c, li);
                 } else {
@@ -345,6 +413,13 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
             canvas_move_layer(c, c->active_layer, c->active_layer + 1);
         if (CheckCollisionPointRec(mouse, r_down))
             canvas_move_layer(c, c->active_layer, c->active_layer - 1);
+
+        // Auto-scroll to keep active layer visible
+        int active_row = c->layer_count - 1 - c->active_layer;
+        if (active_row < layer_scroll)
+            layer_scroll = active_row;
+        if (active_row >= layer_scroll + MAX_VISIBLE_LAYERS)
+            layer_scroll = active_row - MAX_VISIBLE_LAYERS + 1;
     }
 
     return ev;
