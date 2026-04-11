@@ -133,6 +133,28 @@ int main(void) {
             if (mod && IsKeyPressed(KEY_Z))
                 canvas_undo(&app.canvas);
 
+            // Number keys = preset zoom levels (centered on current view)
+            {
+                float new_zoom = 0;
+                if (IsKeyPressed(KEY_ONE))   new_zoom = 0.25f;
+                if (IsKeyPressed(KEY_TWO))   new_zoom = 0.5f;
+                if (IsKeyPressed(KEY_THREE)) new_zoom = 1.0f;
+                if (IsKeyPressed(KEY_FOUR))  new_zoom = 2.0f;
+                if (IsKeyPressed(KEY_FIVE))  new_zoom = 4.0f;
+                if (new_zoom > 0 && new_zoom != app.canvas.zoom) {
+                    int pw = app.canvas.rt.texture.width;
+                    int ph = app.canvas.rt.texture.height;
+                    // Anchor on center of viewport
+                    float cx = (pw * 0.5f - app.canvas.view_x) / app.canvas.zoom;
+                    float cy = (ph * 0.5f - app.canvas.view_y) / app.canvas.zoom;
+                    app.canvas.view_x = pw * 0.5f - cx * new_zoom;
+                    app.canvas.view_y = ph * 0.5f - cy * new_zoom;
+                    app.canvas.zoom   = new_zoom;
+                    canvas_redraw_for_view(&app.canvas);
+                    minimap_t = 2.5f;
+                }
+            }
+
             // F held = show color picker; release picks hovered color
             if (IsKeyPressed(KEY_F)) {
                 color_picker_open = true;
