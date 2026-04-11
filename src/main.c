@@ -41,6 +41,8 @@ int main(void) {
     bool  was_sizing = false;
     Vector2 size_anchor = {0}; // mouse position when D was pressed
     bool  toolbar_hidden = false;
+    bool  color_picker_open = false;
+    Vector2 picker_pos = {0};
 
     while (!WindowShouldClose()) {
 
@@ -96,6 +98,34 @@ int main(void) {
                        IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
             if (mod && IsKeyPressed(KEY_Z))
                 canvas_undo(&app.canvas);
+
+            // F held = show color picker; release picks hovered color
+            if (IsKeyPressed(KEY_F)) {
+                color_picker_open = true;
+                picker_pos = GetMousePosition();
+            }
+            if (color_picker_open && IsKeyReleased(KEY_F)) {
+                // Pick whatever swatch the cursor is hovering
+                Vector2 m = GetMousePosition();
+                float ring_r = 50.0f;
+                static const Color PAL[12] = {
+                    BLACK, DARKGRAY, GRAY, WHITE,
+                    RED, ORANGE, YELLOW, GREEN,
+                    SKYBLUE, BLUE, PURPLE, MAROON,
+                };
+                for (int i = 0; i < 12; i++) {
+                    float angle = (float)i * (360.0f / 12.0f) * DEG2RAD;
+                    float sx = picker_pos.x + cosf(angle) * ring_r;
+                    float sy = picker_pos.y + sinf(angle) * ring_r;
+                    float dx = m.x - sx, dy = m.y - sy;
+                    if (dx * dx + dy * dy < 15.0f * 15.0f) {
+                        app.tools.draw_color = PAL[i];
+                        app.tools.active_tool = TOOL_BRUSH;
+                        break;
+                    }
+                }
+                color_picker_open = false;
+            }
 
             // Space = pan mode; D = brush size scrub; otherwise draw
             bool space = IsKeyDown(KEY_SPACE);
@@ -165,7 +195,8 @@ int main(void) {
                 // Divide by zoom to convert screen → canvas-local coordinates
                 Vector2 cpos  = {(mouse.x - canvas_x - app.canvas.view_x) / app.canvas.zoom,
                                  (mouse.y - CANVAS_Y - app.canvas.view_y) / app.canvas.zoom};
-                bool on_canvas = (mouse.x >= canvas_x &&
+                bool on_canvas = (!color_picker_open &&
+                                  mouse.x >= canvas_x &&
                                   cpos.x >= 0 && cpos.x < app.canvas.width &&
                                   cpos.y >= 0 && cpos.y < app.canvas.height);
 
@@ -228,6 +259,35 @@ int main(void) {
             if (minimap_t < 0.0f) minimap_t = 0.0f;
             float mm_alpha = minimap_t > 1.0f ? 1.0f : minimap_t;
             canvas_draw_minimap(&app.canvas, mm_alpha, canvas_x);
+
+            // Color picker ring
+            if (color_picker_open) {
+                static const Color PAL[12] = {
+                    BLACK, DARKGRAY, GRAY, WHITE,
+                    RED, ORANGE, YELLOW, GREEN,
+                    SKYBLUE, BLUE, PURPLE, MAROON,
+                };
+                float ring_r = 50.0f;
+                float swatch_r = 14.0f;
+                // Background disc
+                DrawCircleV(picker_pos, ring_r + swatch_r + 6, (Color){30, 30, 30, 200});
+                DrawCircleLinesV(picker_pos, ring_r + swatch_r + 6, (Color){80, 80, 80, 200});
+                // Swatches
+                Vector2 mouse_now = GetMousePosition();
+                for (int i = 0; i < 12; i++) {
+                    float angle = (float)i * (360.0f / 12.0f) * DEG2RAD;
+                    float sx = picker_pos.x + cosf(angle) * ring_r;
+                    float sy = picker_pos.y + sinf(angle) * ring_r;
+                    float dx = mouse_now.x - sx, dy = mouse_now.y - sy;
+                    bool hov = (dx * dx + dy * dy < swatch_r * swatch_r);
+                    DrawCircleV((Vector2){sx, sy}, hov ? swatch_r + 2 : swatch_r, PAL[i]);
+                    DrawCircleLinesV((Vector2){sx, sy}, hov ? swatch_r + 2 : swatch_r,
+                                     hov ? WHITE : (Color){100, 100, 100, 255});
+                }
+                // Current color in center
+                DrawCircleV(picker_pos, 12, app.tools.draw_color);
+                DrawCircleLinesV(picker_pos, 12, (Color){150, 150, 150, 255});
+            }
 
             // Brush cursor — circle showing brush size
             {

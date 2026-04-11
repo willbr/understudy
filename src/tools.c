@@ -2,7 +2,7 @@
 
 void tools_init(ToolState *t) {
     t->active_tool = TOOL_BRUSH;
-    t->draw_color  = BLACK;
+    t->draw_color  = SKYBLUE;
     t->brush_radius = 8;
 }
 
