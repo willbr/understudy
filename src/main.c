@@ -132,7 +132,7 @@ int main(void) {
                 SetMousePosition((int)size_anchor.x, (int)size_anchor.y);
                 app.tools.brush_radius += (int)(dx * 0.15f);
                 if (app.tools.brush_radius < 1)  app.tools.brush_radius = 1;
-                if (app.tools.brush_radius > 50) app.tools.brush_radius = 50;
+                if (app.tools.brush_radius > 200) app.tools.brush_radius = 200;
                 if (app.canvas.is_drawing)
                     canvas_end_stroke(&app.canvas);
             } else {
@@ -192,13 +192,38 @@ int main(void) {
             {
                 Vector2 m = GetMousePosition();
                 bool panning = IsKeyDown(KEY_SPACE);
-                if (app.ui.mode == UI_NONE && !panning && m.x >= CANVAS_X) {
+                if (was_sizing) {
+                    // Show brush circle + size label at the anchor point
+                    float r = fmaxf(1.5f, (float)app.tools.brush_radius * app.canvas.zoom);
+                    DrawRing((Vector2){size_anchor.x, size_anchor.y}, r + 1, r + 2.5f, 0, 360, 36,
+                             (Color){0, 0, 0, 180});
+                    DrawRing((Vector2){size_anchor.x, size_anchor.y}, r, r + 1, 0, 360, 36,
+                             (Color){255, 255, 255, 220});
+                    DrawLine((int)size_anchor.x - 4, (int)size_anchor.y, (int)size_anchor.x + 4, (int)size_anchor.y,
+                             (Color){255, 255, 255, 180});
+                    DrawLine((int)size_anchor.x, (int)size_anchor.y - 4, (int)size_anchor.x, (int)size_anchor.y + 4,
+                             (Color){255, 255, 255, 180});
+                    char sz[16];
+                    snprintf(sz, sizeof(sz), "%d", app.tools.brush_radius);
+                    int tw = MeasureText(sz, 16);
+                    int tx = (int)size_anchor.x + (int)r + 8;
+                    int ty = (int)size_anchor.y - 8;
+                    DrawRectangle(tx - 3, ty - 2, tw + 6, 20,
+                                  (Color){30, 30, 30, 200});
+                    DrawText(sz, tx, ty, 16, WHITE);
+                } else if (app.ui.mode == UI_NONE && !panning && m.x >= CANVAS_X) {
                     HideCursor();
                     float r = fmaxf(1.5f, (float)app.tools.brush_radius * app.canvas.zoom);
-                    DrawCircleLines((int)m.x, (int)m.y, r,
-                                    (Color){20, 20, 20, 200});
-                    DrawCircleLines((int)m.x, (int)m.y, r + 1,
-                                    (Color){220, 220, 220, 140});
+                    // Dark outline + white inline for contrast on any background
+                    DrawRing((Vector2){m.x, m.y}, r + 1, r + 2.5f, 0, 360, 36,
+                             (Color){0, 0, 0, 180});
+                    DrawRing((Vector2){m.x, m.y}, r, r + 1, 0, 360, 36,
+                             (Color){255, 255, 255, 220});
+                    // Crosshair at center
+                    DrawLine((int)m.x - 4, (int)m.y, (int)m.x + 4, (int)m.y,
+                             (Color){255, 255, 255, 180});
+                    DrawLine((int)m.x, (int)m.y - 4, (int)m.x, (int)m.y + 4,
+                             (Color){255, 255, 255, 180});
                 } else {
                     ShowCursor();
                 }

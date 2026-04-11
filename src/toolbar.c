@@ -98,7 +98,7 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
     DrawText(size_label, TB_PAD, Y_SIZE_LABEL, 13, LIGHTGRAY);
     Rectangle r_size = {TB_PAD, Y_SIZE_SLIDER, TB_INNER, SLIDER_H};
     DrawRectangleRec(r_size, (Color){50, 50, 50, 255});
-    float ratio = (float)(t->brush_radius - 1) / 49.0f;
+    float ratio = (float)(t->brush_radius - 1) / 199.0f;
     DrawRectangle((int)r_size.x, (int)r_size.y,
                   (int)(r_size.width * ratio), (int)r_size.height,
                   (Color){100, 140, 200, 255});
@@ -219,10 +219,10 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
     // Brush size slider
     Rectangle r_size = {TB_PAD, Y_SIZE_SLIDER, TB_INNER, SLIDER_H};
     if (ldown && CheckCollisionPointRec(mouse, r_size)) {
-        float fv = (mouse.x - r_size.x) / r_size.width * 49.0f + 1.0f;
+        float fv = (mouse.x - r_size.x) / r_size.width * 199.0f + 1.0f;
         t->brush_radius = (int)(fv + 0.5f);
         if (t->brush_radius < 1)  t->brush_radius = 1;
-        if (t->brush_radius > 50) t->brush_radius = 50;
+        if (t->brush_radius > 200) t->brush_radius = 200;
     }
 
     // Color swatches

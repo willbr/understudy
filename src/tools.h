@@ -10,7 +10,7 @@ typedef enum {
 typedef struct {
     ToolType active_tool;
     Color    draw_color;
-    int      brush_radius;  // 1..50
+    int      brush_radius;  // 1..200
 } ToolState;
 
 void tools_init(ToolState *t);
