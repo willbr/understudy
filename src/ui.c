@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "font.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -14,8 +15,8 @@ static bool ui_button(Rectangle r, const char *label) {
     Color bg = hovered ? (Color){80, 120, 200, 255} : (Color){60, 60, 60, 255};
     DrawRectangleRec(r, bg);
     DrawRectangleLinesEx(r, 1, (Color){140, 140, 140, 255});
-    int fw = MeasureText(label, 14);
-    DrawText(label, (int)(r.x + r.width / 2 - fw / 2),
+    int fw = MeasureUI(label, 14);
+    DrawUI(label, (int)(r.x + r.width / 2 - fw / 2),
              (int)(r.y + r.height / 2 - 7), 14, WHITE);
     return hovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 }
@@ -76,21 +77,21 @@ static void save_dialog_draw(const UIState *u) {
     DrawRectangle((int)px, (int)py, 400, 150, (Color){30, 30, 30, 255});
     DrawRectangleLinesEx((Rectangle){px, py, 400, 150}, 1, GRAY);
 
-    DrawText("Save Painting", (int)px + 10, (int)py + 10, 16, RAYWHITE);
+    DrawUI("Save Painting", (int)px + 10, (int)py + 10, 16, RAYWHITE);
 
     // Text field
     Rectangle field = {px + 10, py + 45, 380, 30};
     DrawRectangleRec(field, (Color){20, 20, 20, 255});
     DrawRectangleLinesEx(field, 1, (Color){140, 140, 140, 255});
-    DrawText(u->text_input, (int)field.x + 5, (int)field.y + 7, 14, WHITE);
+    DrawUI(u->text_input, (int)field.x + 5, (int)field.y + 7, 14, WHITE);
 
     // Blinking cursor
     if ((int)(u->cursor_blink_t * 2) % 2 == 0) {
-        int tx = MeasureText(u->text_input, 14);
+        int tx = MeasureUI(u->text_input, 14);
         DrawRectangle((int)field.x + 5 + tx, (int)field.y + 5, 2, 20, WHITE);
     }
 
-    DrawText(u->text_len == 0 ? "Enter a name..." : "",
+    DrawUI(u->text_len == 0 ? "Enter a name..." : "",
              (int)field.x + 6, (int)field.y + 8, 14, (Color){80, 80, 80, 255});
 
     Rectangle r_ok     = {px + 250, py + 100, 80, 30};
@@ -168,10 +169,10 @@ static void load_list_draw(const UIState *u) {
     DrawRectangle(0, 0, WIN_W, WIN_H, Fade(BLACK, 0.55f));
     DrawRectangle((int)px, (int)py, 520, 470, (Color){30, 30, 30, 255});
     DrawRectangleLinesEx((Rectangle){px, py, 520, 470}, 1, GRAY);
-    DrawText("Load Painting", (int)px + 10, (int)py + 10, 16, RAYWHITE);
+    DrawUI("Load Painting", (int)px + 10, (int)py + 10, 16, RAYWHITE);
 
     if (u->load_count == 0) {
-        DrawText("No saved paintings.", (int)px + 10, (int)list_y + 10, 14, LIGHTGRAY);
+        DrawUI("No saved paintings.", (int)px + 10, (int)list_y + 10, 14, LIGHTGRAY);
     }
 
     for (int i = 0; i < LOAD_VISIBLE && (i + u->load_scroll) < u->load_count; i++) {
@@ -187,14 +188,14 @@ static void load_list_draw(const UIState *u) {
 
         char info[160];
         snprintf(info, sizeof(info), "%s  (%d strokes)  %s", m->name, m->stroke_count, m->updated_at);
-        DrawText(info, (int)row.x + 6, (int)row.y + 10, 13, WHITE);
+        DrawUI(info, (int)row.x + 6, (int)row.y + 10, 13, WHITE);
     }
 
     // Scroll indicator
     if (u->load_count > LOAD_VISIBLE) {
         char sc[32];
         snprintf(sc, sizeof(sc), "%d/%d", u->load_scroll + 1, u->load_count);
-        DrawText(sc, (int)px + 10, (int)(list_y + LOAD_VISIBLE * LOAD_ROW_H + 4), 12, GRAY);
+        DrawUI(sc, (int)px + 10, (int)(list_y + LOAD_VISIBLE * LOAD_ROW_H + 4), 12, GRAY);
     }
 
     Rectangle r_open   = {px + 390, py + 420, 80, 30};
@@ -229,8 +230,8 @@ static void confirm_new_draw(void) {
     DrawRectangle(0, 0, WIN_W, WIN_H, Fade(BLACK, 0.55f));
     DrawRectangle((int)px, (int)py, 320, 130, (Color){30, 30, 30, 255});
     DrawRectangleLinesEx((Rectangle){px, py, 320, 130}, 1, GRAY);
-    DrawText("Discard unsaved changes?", (int)px + 10, (int)py + 15, 15, RAYWHITE);
-    DrawText("Current painting will be lost.", (int)px + 10, (int)py + 40, 13, LIGHTGRAY);
+    DrawUI("Discard unsaved changes?", (int)px + 10, (int)py + 15, 15, RAYWHITE);
+    DrawUI("Current painting will be lost.", (int)px + 10, (int)py + 40, 13, LIGHTGRAY);
 
     float bpx = WIN_W / 2.0f - 160;
     float bpy = WIN_H / 2.0f - 60;

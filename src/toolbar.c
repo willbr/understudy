@@ -1,5 +1,6 @@
 #include "toolbar.h"
 #include "canvas.h"
+#include "font.h"
 
 #include <stdio.h>
 
@@ -55,8 +56,8 @@ static bool button(Rectangle r, const char *label, bool active) {
     if (hovered) bg = active ? BLUE : (Color){80, 80, 80, 255};
     DrawRectangleRec(r, bg);
     DrawRectangleLinesEx(r, 1, (Color){120, 120, 120, 255});
-    int fw = MeasureText(label, 14);
-    DrawText(label, (int)(r.x + r.width / 2 - fw / 2),
+    int fw = MeasureUI(label, 14);
+    DrawUI(label, (int)(r.x + r.width / 2 - fw / 2),
              (int)(r.y + r.height / 2 - 7), 14, text);
     return hovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 }
@@ -66,8 +67,8 @@ static bool small_button(Rectangle r, const char *label) {
     Color bg = hovered ? (Color){80, 80, 80, 255} : (Color){55, 55, 55, 255};
     DrawRectangleRec(r, bg);
     DrawRectangleLinesEx(r, 1, (Color){100, 100, 100, 255});
-    int fw = MeasureText(label, 12);
-    DrawText(label, (int)(r.x + r.width / 2 - fw / 2),
+    int fw = MeasureUI(label, 12);
+    DrawUI(label, (int)(r.x + r.width / 2 - fw / 2),
              (int)(r.y + r.height / 2 - 6), 12, WHITE);
     return hovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 }
@@ -80,22 +81,22 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
     DrawLine(TB_W, 0, TB_W, TB_H, (Color){70, 70, 70, 255});
 
     // Title
-    DrawText("Claude Paint", TB_PAD, Y_TITLE, 16, RAYWHITE);
+    DrawUI("Claude Paint", TB_PAD, Y_TITLE, 16, RAYWHITE);
 
     // Tool buttons
     Rectangle r_brush  = {TB_PAD,          Y_TOOLS, 95, 30};
     Rectangle r_eraser = {TB_PAD + 100,     Y_TOOLS, 95, 30};
     DrawRectangleRec(r_brush,  t->active_tool == TOOL_BRUSH  ? DARKBLUE : (Color){60,60,60,255});
     DrawRectangleLinesEx(r_brush,  1, GRAY);
-    DrawText("Brush",  TB_PAD + 28,        Y_TOOLS + 8, 14, WHITE);
+    DrawUI("Brush",  TB_PAD + 28,        Y_TOOLS + 8, 14, WHITE);
     DrawRectangleRec(r_eraser, t->active_tool == TOOL_ERASER ? DARKBLUE : (Color){60,60,60,255});
     DrawRectangleLinesEx(r_eraser, 1, GRAY);
-    DrawText("Eraser", TB_PAD + 105,       Y_TOOLS + 8, 14, WHITE);
+    DrawUI("Eraser", TB_PAD + 105,       Y_TOOLS + 8, 14, WHITE);
 
     // Brush size
     char size_label[32];
     snprintf(size_label, sizeof(size_label), "Size: %d", t->brush_radius);
-    DrawText(size_label, TB_PAD, Y_SIZE_LABEL, 13, LIGHTGRAY);
+    DrawUI(size_label, TB_PAD, Y_SIZE_LABEL, 13, LIGHTGRAY);
     Rectangle r_size = {TB_PAD, Y_SIZE_SLIDER, TB_INNER, SLIDER_H};
     DrawRectangleRec(r_size, (Color){50, 50, 50, 255});
     float ratio = (float)(t->brush_radius - 1) / 199.0f;
@@ -105,7 +106,7 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
     DrawRectangleLinesEx(r_size, 1, (Color){120, 120, 120, 255});
 
     // Color swatches
-    DrawText("Colors", TB_PAD, Y_SWATCHES - 18, 13, LIGHTGRAY);
+    DrawUI("Colors", TB_PAD, Y_SWATCHES - 18, 13, LIGHTGRAY);
     for (int i = 0; i < 12; i++) {
         int col = i % SWATCH_COLS;
         int row = i / SWATCH_COLS;
@@ -126,7 +127,7 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
     }
 
     // Custom RGB sliders
-    DrawText("Custom Color", TB_PAD, Y_RGB_LABEL, 13, LIGHTGRAY);
+    DrawUI("Custom Color", TB_PAD, Y_RGB_LABEL, 13, LIGHTGRAY);
     Rectangle r_r = {TB_PAD, Y_RGB_R, TB_INNER - 30, SLIDER_H};
     Rectangle r_g = {TB_PAD, Y_RGB_G, TB_INNER - 30, SLIDER_H};
     Rectangle r_b = {TB_PAD, Y_RGB_B, TB_INNER - 30, SLIDER_H};
@@ -153,14 +154,14 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
     snprintf(rv, sizeof(rv), "%3d", t->draw_color.r);
     snprintf(gv, sizeof(gv), "%3d", t->draw_color.g);
     snprintf(bv, sizeof(bv), "%3d", t->draw_color.b);
-    DrawText(rv, TB_W - 30, Y_RGB_R + 1, 12, LIGHTGRAY);
-    DrawText(gv, TB_W - 30, Y_RGB_G + 1, 12, LIGHTGRAY);
-    DrawText(bv, TB_W - 30, Y_RGB_B + 1, 12, LIGHTGRAY);
+    DrawUI(rv, TB_W - 30, Y_RGB_R + 1, 12, LIGHTGRAY);
+    DrawUI(gv, TB_W - 30, Y_RGB_G + 1, 12, LIGHTGRAY);
+    DrawUI(bv, TB_W - 30, Y_RGB_B + 1, 12, LIGHTGRAY);
 
     // Color preview
     DrawRectangle(TB_PAD, Y_PREVIEW, 40, 30, t->draw_color);
     DrawRectangleLines(TB_PAD, Y_PREVIEW, 40, 30, GRAY);
-    DrawText("Preview", TB_PAD + 48, Y_PREVIEW + 8, 12, LIGHTGRAY);
+    DrawUI("Preview", TB_PAD + 48, Y_PREVIEW + 8, 12, LIGHTGRAY);
 
     // Action buttons
     button((Rectangle){TB_PAD, Y_BTN_NEW,  TB_INNER, BTN_H}, "New Canvas", false);
@@ -168,7 +169,7 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
     button((Rectangle){TB_PAD, Y_BTN_LOAD, TB_INNER, BTN_H}, "Load",       false);
 
     // ── Layer panel ──────────────────────────────────────────────────────────
-    DrawText("Layers", TB_PAD, Y_LAYER_LABEL, 13, LIGHTGRAY);
+    DrawUI("Layers", TB_PAD, Y_LAYER_LABEL, 13, LIGHTGRAY);
 
     // Draw layer rows (bottom layer = index 0 at the bottom of the list)
     int visible = c->layer_count < MAX_VISIBLE_LAYERS ? c->layer_count : MAX_VISIBLE_LAYERS;
@@ -186,11 +187,11 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
 
         // Visibility indicator
         const char *vis = c->layers[li].visible ? "O" : "-";
-        DrawText(vis, (int)row.x + 4, (int)ry + 5, 12,
+        DrawUI(vis, (int)row.x + 4, (int)ry + 5, 12,
                  c->layers[li].visible ? GREEN : (Color){80, 80, 80, 255});
 
         // Layer name
-        DrawText(c->layers[li].name, (int)row.x + 20, (int)ry + 5, 12, WHITE);
+        DrawUI(c->layers[li].name, (int)row.x + 20, (int)ry + 5, 12, WHITE);
     }
 
     // Layer buttons

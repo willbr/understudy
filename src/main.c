@@ -6,6 +6,9 @@
 #include "toolbar.h"
 #include "ui.h"
 #include "db.h"
+#include "font.h"
+
+Font g_font;
 
 #define TARGET_FPS 60
 
@@ -23,6 +26,9 @@ int main(void) {
     InitWindow(1280, 800, "Claude Paint");
     SetTargetFPS(TARGET_FPS);
     SetExitKey(KEY_NULL); // Escape is used by modals
+
+    g_font = LoadFontEx("/System/Library/Fonts/SFNS.ttf", 32, NULL, 0);
+    SetTextureFilter(g_font.texture, TEXTURE_FILTER_BILINEAR);
 
     canvas_init(&app.canvas);
     tools_init(&app.tools);
@@ -177,10 +183,10 @@ int main(void) {
                      app.canvas.layer_count,
                      app.canvas.layers[app.canvas.active_layer].stroke_count,
                      (int)(app.canvas.zoom * 100.0f + 0.5f));
-            DrawText(sc, 10, GetScreenHeight() - 20, 12, (Color){100, 100, 100, 255});
+            DrawUI(sc, 10, GetScreenHeight() - 20, 12, (Color){100, 100, 100, 255});
 
             if (app.canvas.dirty)
-                DrawText("*", GetScreenWidth() - 20, 5, 16, YELLOW);
+                DrawUI("*", GetScreenWidth() - 20, 5, 16, YELLOW);
 
             // Minimap — fade in on view change, fade out after 2.5 s
             minimap_t -= GetFrameTime();
@@ -205,12 +211,12 @@ int main(void) {
                              (Color){255, 255, 255, 180});
                     char sz[16];
                     snprintf(sz, sizeof(sz), "%d", app.tools.brush_radius);
-                    int tw = MeasureText(sz, 16);
+                    int tw = MeasureUI(sz, 16);
                     int tx = (int)size_anchor.x + (int)r + 8;
                     int ty = (int)size_anchor.y - 8;
                     DrawRectangle(tx - 3, ty - 2, tw + 6, 20,
                                   (Color){30, 30, 30, 200});
-                    DrawText(sz, tx, ty, 16, WHITE);
+                    DrawUI(sz, tx, ty, 16, WHITE);
                 } else if (app.ui.mode == UI_NONE && !panning && m.x >= CANVAS_X) {
                     HideCursor();
                     float r = fmaxf(1.5f, (float)app.tools.brush_radius * app.canvas.zoom);
@@ -241,6 +247,7 @@ int main(void) {
     // ── Cleanup ───────────────────────────────────────────────────────────────
     ui_free(&app.ui);
     canvas_free(&app.canvas);
+    UnloadFont(g_font);
     if (app.db) db_close(app.db);
     CloseWindow();
     return 0;
