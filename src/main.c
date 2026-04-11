@@ -18,13 +18,24 @@ typedef struct {
     ToolState tools;
     UIState   ui;
     sqlite3  *db;
+    char      canvas_name[128];
 } AppState;
+
+static void update_title(AppState *app) {
+    char title[160];
+    if (app->canvas_name[0])
+        snprintf(title, sizeof(title), "%s — Claude Paint", app->canvas_name);
+    else
+        snprintf(title, sizeof(title), "Untitled — Claude Paint");
+    SetWindowTitle(title);
+}
 
 int main(void) {
     AppState app = {0};
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1280, 800, "Claude Paint");
+    MaximizeWindow();
     SetTargetFPS(TARGET_FPS);
     SetExitKey(KEY_NULL); // Escape is used by modals
 
@@ -34,6 +45,8 @@ int main(void) {
     canvas_init(&app.canvas);
     tools_init(&app.tools);
     ui_init(&app.ui);
+    app.canvas_name[0] = '\0';
+    update_title(&app);
 
     if (!db_open(&app.db))
         TraceLog(LOG_WARNING, "Could not open database — save/load disabled");
@@ -98,7 +111,9 @@ int main(void) {
             // Toolbar button actions
             if (ev.wants_new) {
                 canvas_clear(&app.canvas);
-                autosave_id = 0;  // new session → new autosave slot
+                autosave_id = 0;
+                app.canvas_name[0] = '\0';
+                update_title(&app);
             }
             if (ev.wants_save && app.db) {
                 app.ui.mode           = UI_SAVE_DIALOG;
@@ -571,6 +586,14 @@ int main(void) {
             if (app.ui.mode != UI_NONE) {
                 ui_update(&app.ui, &app.canvas, app.db, canvas_x);
                 ui_draw(&app.ui, &app.canvas, canvas_x);
+            }
+
+            // Update window title if name changed (after save/load)
+            if (app.ui.last_saved_name[0] &&
+                strcmp(app.canvas_name, app.ui.last_saved_name) != 0) {
+                strncpy(app.canvas_name, app.ui.last_saved_name, 127);
+                app.canvas_name[127] = '\0';
+                update_title(&app);
             }
 
         EndDrawing();

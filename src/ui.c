@@ -62,6 +62,8 @@ static void save_dialog_update(UIState *u, Canvas *canvas, sqlite3 *db) {
                              canvas->layers, canvas->layer_count,
                              canvas->width, canvas->height);
             canvas->dirty = false;
+            strncpy(u->last_saved_name, u->text_input, 127);
+            u->last_saved_name[127] = '\0';
             u->mode = UI_NONE;
         }
     }
@@ -163,6 +165,8 @@ static void load_list_update(UIState *u, Canvas *canvas, sqlite3 *db) {
         int lcount = 0, w = 0, h = 0;
         if (db_load_painting(db, m->id, &layers, &lcount, &w, &h)) {
             canvas_load_layers(canvas, layers, lcount);
+            strncpy(u->last_saved_name, m->name, 127);
+            u->last_saved_name[127] = '\0';
         }
         ui_free(u);
         u->mode = UI_NONE;

@@ -21,6 +21,7 @@ typedef struct {
     char          text_input[128];
     int           text_len;
     float         cursor_blink_t;
+    char          last_saved_name[128];  // set after save/load for title update
     // Load list
     PaintingMeta *load_list;
     int           load_count;
