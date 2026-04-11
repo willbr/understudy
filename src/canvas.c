@@ -39,20 +39,6 @@ static Texture2D gen_paper_texture(void) {
     return tex;
 }
 
-// Draw paper using the procedural shader (crisp at any zoom)
-static void draw_paper_shader(const Canvas *c, float vx, float vy, float zoom) {
-    float docSize[2] = {(float)c->width, (float)c->height};
-    SetShaderValue(c->paper_shader, GetShaderLocation(c->paper_shader, "docSize"),
-                   docSize, SHADER_UNIFORM_VEC2);
-
-    BeginShaderMode(c->paper_shader);
-    // src covers full texture so fragTexCoord ranges 0..1 across the quad
-    Rectangle src  = {0, 0, (float)c->paper_tex.width, (float)c->paper_tex.height};
-    Rectangle dest = {vx, vy, (float)c->width * zoom, (float)c->height * zoom};
-    DrawTexturePro(c->paper_tex, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
-    EndShaderMode();
-}
-
 // Bitmap-based paper for minimap (shader not needed at tiny scale)
 static void draw_paper_bitmap(const Canvas *c, float vx, float vy, float zoom) {
     Rectangle src  = {0, 0, (float)c->width, (float)c->height};
@@ -89,37 +75,121 @@ static Layer *active_layer(Canvas *c) {
     return &c->layers[c->active_layer];
 }
 
+// Catmull-Rom spline interpolation between 4 points
+static Vector2 catmull_rom(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, float t) {
+    float t2 = t * t, t3 = t2 * t;
+    return (Vector2){
+        0.5f * (2.0f*p1.x + (-p0.x+p2.x)*t + (2.0f*p0.x-5.0f*p1.x+4.0f*p2.x-p3.x)*t2 + (-p0.x+3.0f*p1.x-3.0f*p2.x+p3.x)*t3),
+        0.5f * (2.0f*p1.y + (-p0.y+p2.y)*t + (2.0f*p0.y-5.0f*p1.y+4.0f*p2.y-p3.y)*t2 + (-p0.y+3.0f*p1.y-3.0f*p2.y+p3.y)*t3)
+    };
+}
+
 static void render_stroke_transformed(const Stroke *s,
                                       float vx, float vy, float zoom) {
     if (s->count == 0) return;
     Color color = (s->tool == TOOL_ERASER) ? WHITE : s->color;
-    float r = fmaxf(1.0f, (float)s->radius * zoom);
+    float base_r = fmaxf(1.0f, (float)s->radius * zoom);
 
-    float sx0 = s->points[0].x * zoom + vx;
-    float sy0 = s->points[0].y * zoom + vy;
-    DrawCircleV((Vector2){sx0, sy0}, r, color);
+    // Single point — small dot
+    if (s->count == 1) {
+        float sx0 = s->points[0].x * zoom + vx;
+        float sy0 = s->points[0].y * zoom + vy;
+        DrawCircleV((Vector2){sx0, sy0}, base_r * 0.5f, color);
+        return;
+    }
 
-    for (int i = 1; i < s->count; i++) {
-        float fsx = s->points[i - 1].x * zoom + vx;
-        float fsy = s->points[i - 1].y * zoom + vy;
-        float tsx = s->points[i].x     * zoom + vx;
-        float tsy = s->points[i].y     * zoom + vy;
-        float dx  = tsx - fsx, dy = tsy - fsy;
-        float dist = sqrtf(dx * dx + dy * dy);
-        float step = fmaxf(1.0f, r * 0.5f);
-        int   steps = (int)(dist / step) + 1;
-        for (int j = 1; j <= steps; j++) {
+    // Two points — just a line segment
+    if (s->count == 2) {
+        float fsx = s->points[0].x * zoom + vx;
+        float fsy = s->points[0].y * zoom + vy;
+        float tsx = s->points[1].x * zoom + vx;
+        float tsy = s->points[1].y * zoom + vy;
+        float dx = tsx - fsx, dy = tsy - fsy;
+        float dist = sqrtf(dx*dx + dy*dy);
+        float r = base_r * 0.7f;
+        float step = fmaxf(0.5f, r * 0.25f);
+        int steps = (int)(dist / step) + 1;
+        for (int j = 0; j <= steps; j++) {
             float t = (float)j / (float)steps;
-            DrawCircleV((Vector2){fsx + dx * t, fsy + dy * t}, r, color);
+            DrawCircleV((Vector2){fsx + dx*t, fsy + dy*t}, r, color);
+        }
+        return;
+    }
+
+    // 3+ points: Catmull-Rom spline for smooth curves
+    for (int i = 0; i < s->count - 1; i++) {
+        // Get 4 control points (clamp at boundaries)
+        int i0 = (i > 0) ? i - 1 : 0;
+        int i1 = i;
+        int i2 = i + 1;
+        int i3 = (i + 2 < s->count) ? i + 2 : s->count - 1;
+
+        Vector2 p0 = {s->points[i0].x * zoom + vx, s->points[i0].y * zoom + vy};
+        Vector2 p1 = {s->points[i1].x * zoom + vx, s->points[i1].y * zoom + vy};
+        Vector2 p2 = {s->points[i2].x * zoom + vx, s->points[i2].y * zoom + vy};
+        Vector2 p3 = {s->points[i3].x * zoom + vx, s->points[i3].y * zoom + vy};
+
+        // Segment distance (straight) for step count
+        float dx = p2.x - p1.x, dy = p2.y - p1.y;
+        float dist = sqrtf(dx*dx + dy*dy);
+
+        // Speed-based radius
+        float speed = dist / fmaxf(base_r, 1.0f);
+        float speed_factor = 1.0f - 0.3f * fminf(speed / 3.0f, 1.0f);
+        float r = base_r * speed_factor;
+
+        // Taper at start and end
+        float start_taper = fminf((float)(i + 1) / 3.0f, 1.0f);
+        float end_taper   = fminf((float)(s->count - 1 - i) / 3.0f, 1.0f);
+        float taper = fminf(start_taper, end_taper);
+        r *= (0.4f + 0.6f * taper);
+
+        // Interpolate along spline
+        float step = fmaxf(0.5f, r * 0.25f);
+        int steps = (int)(dist / step) + 1;
+        if (steps < 2) steps = 2;
+        for (int j = 0; j <= steps; j++) {
+            float t = (float)j / (float)steps;
+            Vector2 pt = catmull_rom(p0, p1, p2, p3, t);
+            DrawCircleV(pt, r, color);
         }
     }
 }
 
 // Full re-render of all visible layers at the current view transform.
-static void redraw_all(Canvas *c) {
+// Composite strokes_rt into rt using the ink shader
+static void composite_ink(Canvas *c) {
+    int pw = c->rt.texture.width;
+    int ph = c->rt.texture.height;
+
     BeginTextureMode(c->rt);
     ClearBackground((Color){45, 45, 45, 255});
-    draw_paper_shader(c, c->view_x, c->view_y, c->zoom);
+
+    float docSize[2] = {(float)c->width, (float)c->height};
+    float viewOff[2] = {c->view_x, c->view_y};
+    float res[2]     = {(float)pw, (float)ph};
+    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "docSize"),
+                   docSize, SHADER_UNIFORM_VEC2);
+    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "viewOffset"),
+                   viewOff, SHADER_UNIFORM_VEC2);
+    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "zoom"),
+                   &c->zoom, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "resolution"),
+                   res, SHADER_UNIFORM_VEC2);
+
+    BeginShaderMode(c->ink_shader);
+    Rectangle src  = {0, 0, (float)pw, -(float)ph};
+    Rectangle dest = {0, 0, (float)pw, (float)ph};
+    DrawTexturePro(c->strokes_rt.texture, src, dest,
+                   (Vector2){0, 0}, 0.0f, WHITE);
+    EndShaderMode();
+    EndTextureMode();
+}
+
+static void redraw_all(Canvas *c) {
+    // Render all committed strokes into strokes_rt
+    BeginTextureMode(c->strokes_rt);
+    ClearBackground(BLACK);
     for (int li = 0; li < c->layer_count; li++) {
         if (!c->layers[li].visible) continue;
         Layer *l = &c->layers[li];
@@ -128,6 +198,8 @@ static void redraw_all(Canvas *c) {
                                       c->view_x, c->view_y, c->zoom);
     }
     EndTextureMode();
+
+    composite_ink(c);
 }
 
 static void update_minimap(Canvas *c) {
@@ -168,9 +240,10 @@ void canvas_init(Canvas *c) {
     c->height = CANVAS_DOC_H;
 
     c->paper_tex = gen_paper_texture();
-    c->paper_shader = LoadShader(NULL, "src/paper.fs");
+    c->ink_shader = LoadShader(NULL, "src/ink.fs");
 
-    c->rt = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
+    c->rt         = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
+    c->strokes_rt = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
     c->minimap_rt = LoadRenderTexture(MINIMAP_SIZE, MINIMAP_SIZE);
 
     memset(c->layers, 0, sizeof(c->layers));
@@ -188,9 +261,10 @@ void canvas_init(Canvas *c) {
 }
 
 void canvas_free(Canvas *c) {
-    UnloadShader(c->paper_shader);
+    UnloadShader(c->ink_shader);
     UnloadTexture(c->paper_tex);
     UnloadRenderTexture(c->minimap_rt);
+    UnloadRenderTexture(c->strokes_rt);
     UnloadRenderTexture(c->rt);
     for (int i = 0; i < c->layer_count; i++)
         layer_free(&c->layers[i]);
@@ -218,28 +292,21 @@ void canvas_add_point(Canvas *c, Vector2 p) {
     }
     s->points[s->count++] = p;
 
-    Color color = (s->tool == TOOL_ERASER) ? WHITE : s->color;
-    float r  = fmaxf(1.0f, (float)s->radius * c->zoom);
-    float sx = p.x * c->zoom + c->view_x;
-    float sy = p.y * c->zoom + c->view_y;
-
-    BeginTextureMode(c->rt);
-    if (s->count == 1) {
-        DrawCircleV((Vector2){sx, sy}, r, color);
-    } else {
-        Vector2 prev = s->points[s->count - 2];
-        float fsx = prev.x * c->zoom + c->view_x;
-        float fsy = prev.y * c->zoom + c->view_y;
-        float dx  = sx - fsx, dy = sy - fsy;
-        float dist = sqrtf(dx * dx + dy * dy);
-        float step = fmaxf(1.0f, r * 0.5f);
-        int   steps = (int)(dist / step) + 1;
-        for (int j = 1; j <= steps; j++) {
-            float t = (float)j / (float)steps;
-            DrawCircleV((Vector2){fsx + dx * t, fsy + dy * t}, r, color);
-        }
+    // Re-render all committed strokes + current stroke with spline
+    BeginTextureMode(c->strokes_rt);
+    ClearBackground(BLACK);
+    for (int li = 0; li < c->layer_count; li++) {
+        if (!c->layers[li].visible) continue;
+        Layer *l = &c->layers[li];
+        for (int si = 0; si < l->stroke_count; si++)
+            render_stroke_transformed(&l->strokes[si],
+                                      c->view_x, c->view_y, c->zoom);
     }
+    // Render current in-progress stroke with same spline logic
+    render_stroke_transformed(s, c->view_x, c->view_y, c->zoom);
     EndTextureMode();
+
+    composite_ink(c);
     c->dirty = true;
 }
 
@@ -318,11 +385,12 @@ void canvas_load_layers(Canvas *c, Layer *layers, int layer_count) {
 }
 
 bool canvas_export_png(Canvas *c, const char *path) {
-    // Render all visible layers at full doc resolution (1:1, no pan offset)
-    RenderTexture2D export_rt = LoadRenderTexture(c->width, c->height);
-    BeginTextureMode(export_rt);
-    ClearBackground(WHITE);
-    draw_paper_shader(c, 0.0f, 0.0f, 1.0f);
+    int ew = c->width, eh = c->height;
+
+    // Render strokes at full doc resolution
+    RenderTexture2D strokes = LoadRenderTexture(ew, eh);
+    BeginTextureMode(strokes);
+    ClearBackground(BLACK);
     for (int li = 0; li < c->layer_count; li++) {
         if (!c->layers[li].visible) continue;
         Layer *l = &c->layers[li];
@@ -330,6 +398,27 @@ bool canvas_export_png(Canvas *c, const char *path) {
             render_stroke_transformed(&l->strokes[si], 0.0f, 0.0f, 1.0f);
     }
     EndTextureMode();
+
+    // Composite with ink shader
+    RenderTexture2D export_rt = LoadRenderTexture(ew, eh);
+    BeginTextureMode(export_rt);
+    ClearBackground(WHITE);
+    float docSize[2] = {(float)ew, (float)eh};
+    float viewOff[2] = {0.0f, 0.0f};
+    float res[2]     = {(float)ew, (float)eh};
+    float z = 1.0f;
+    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "docSize"), docSize, SHADER_UNIFORM_VEC2);
+    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "viewOffset"), viewOff, SHADER_UNIFORM_VEC2);
+    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "zoom"), &z, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "resolution"), res, SHADER_UNIFORM_VEC2);
+    BeginShaderMode(c->ink_shader);
+    Rectangle src  = {0, 0, (float)ew, -(float)eh};
+    Rectangle dest = {0, 0, (float)ew, (float)eh};
+    DrawTexturePro(strokes.texture, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
+    EndShaderMode();
+    EndTextureMode();
+
+    UnloadRenderTexture(strokes);
 
     // Grab image (Y-flip needed for RenderTexture)
     Image img = LoadImageFromTexture(export_rt.texture);
@@ -422,7 +511,9 @@ void canvas_redraw_for_view(Canvas *c) {
 
 void canvas_resize(Canvas *c, int panel_w, int panel_h) {
     UnloadRenderTexture(c->rt);
-    c->rt = LoadRenderTexture(panel_w, panel_h);
+    UnloadRenderTexture(c->strokes_rt);
+    c->rt         = LoadRenderTexture(panel_w, panel_h);
+    c->strokes_rt = LoadRenderTexture(panel_w, panel_h);
     redraw_all(c);
 }
 
