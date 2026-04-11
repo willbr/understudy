@@ -4,7 +4,8 @@
 
 typedef enum {
     TOOL_BRUSH = 0,
-    TOOL_ERASER
+    TOOL_ERASER,
+    TOOL_LINE
 } ToolType;
 
 typedef struct {

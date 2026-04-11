@@ -84,8 +84,8 @@ static Vector2 catmull_rom(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, float
     };
 }
 
-static void render_stroke_transformed(const Stroke *s,
-                                      float vx, float vy, float zoom) {
+void render_stroke_transformed(const Stroke *s,
+                               float vx, float vy, float zoom) {
     if (s->count == 0) return;
     Color color = (s->tool == TOOL_ERASER) ? WHITE : s->color;
     float base_r = fmaxf(1.0f, (float)s->radius * zoom);
@@ -95,6 +95,23 @@ static void render_stroke_transformed(const Stroke *s,
         float sx0 = s->points[0].x * zoom + vx;
         float sy0 = s->points[0].y * zoom + vy;
         DrawCircleV((Vector2){sx0, sy0}, base_r * 0.5f, color);
+        return;
+    }
+
+    // Line tool: straight line between two points, uniform width
+    if (s->tool == TOOL_LINE && s->count == 2) {
+        float fsx = s->points[0].x * zoom + vx;
+        float fsy = s->points[0].y * zoom + vy;
+        float tsx = s->points[1].x * zoom + vx;
+        float tsy = s->points[1].y * zoom + vy;
+        float dx = tsx - fsx, dy = tsy - fsy;
+        float dist = sqrtf(dx*dx + dy*dy);
+        float step = fmaxf(0.5f, base_r * 0.25f);
+        int steps = (int)(dist / step) + 1;
+        for (int j = 0; j <= steps; j++) {
+            float t = (float)j / (float)steps;
+            DrawCircleV((Vector2){fsx + dx*t, fsy + dy*t}, base_r, color);
+        }
         return;
     }
 
@@ -158,7 +175,7 @@ static void render_stroke_transformed(const Stroke *s,
 
 // Full re-render of all visible layers at the current view transform.
 // Composite strokes_rt into rt using the ink shader
-static void composite_ink(Canvas *c) {
+void composite_ink(Canvas *c) {
     int pw = c->rt.texture.width;
     int ph = c->rt.texture.height;
 

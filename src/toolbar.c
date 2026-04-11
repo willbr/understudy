@@ -87,14 +87,18 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
     DrawUI("Claude Paint", TB_PAD, Y_TITLE, 16, RAYWHITE);
 
     // Tool buttons
-    Rectangle r_brush  = {TB_PAD,          Y_TOOLS, 95, 30};
-    Rectangle r_eraser = {TB_PAD + 100,     Y_TOOLS, 95, 30};
+    Rectangle r_brush  = {TB_PAD,          Y_TOOLS, 60, 30};
+    Rectangle r_eraser = {TB_PAD + 65,     Y_TOOLS, 65, 30};
+    Rectangle r_line   = {TB_PAD + 135,    Y_TOOLS, 60, 30};
     DrawRectangleRec(r_brush,  t->active_tool == TOOL_BRUSH  ? DARKBLUE : (Color){60,60,60,255});
     DrawRectangleLinesEx(r_brush,  1, GRAY);
-    DrawUI("Brush",  TB_PAD + 28,        Y_TOOLS + 8, 14, WHITE);
+    DrawUI("Brush",  TB_PAD + 12,        Y_TOOLS + 8, 13, WHITE);
     DrawRectangleRec(r_eraser, t->active_tool == TOOL_ERASER ? DARKBLUE : (Color){60,60,60,255});
     DrawRectangleLinesEx(r_eraser, 1, GRAY);
-    DrawUI("Eraser", TB_PAD + 105,       Y_TOOLS + 8, 14, WHITE);
+    DrawUI("Eraser", TB_PAD + 72,        Y_TOOLS + 8, 13, WHITE);
+    DrawRectangleRec(r_line,   t->active_tool == TOOL_LINE   ? DARKBLUE : (Color){60,60,60,255});
+    DrawRectangleLinesEx(r_line, 1, GRAY);
+    DrawUI("Line",   TB_PAD + 147,       Y_TOOLS + 8, 13, WHITE);
 
     // Brush size
     char size_label[32];
@@ -218,10 +222,12 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
     if (mouse.x > TB_W) return ev;
 
     // Tool buttons
-    Rectangle r_brush  = {TB_PAD,      Y_TOOLS, 95, 30};
-    Rectangle r_eraser = {TB_PAD + 100, Y_TOOLS, 95, 30};
+    Rectangle r_brush  = {TB_PAD,       Y_TOOLS, 60, 30};
+    Rectangle r_eraser = {TB_PAD + 65,  Y_TOOLS, 65, 30};
+    Rectangle r_line   = {TB_PAD + 135, Y_TOOLS, 60, 30};
     if (lpress && CheckCollisionPointRec(mouse, r_brush))  t->active_tool = TOOL_BRUSH;
     if (lpress && CheckCollisionPointRec(mouse, r_eraser)) t->active_tool = TOOL_ERASER;
+    if (lpress && CheckCollisionPointRec(mouse, r_line))   t->active_tool = TOOL_LINE;
 
     // Brush size slider
     Rectangle r_size = {TB_PAD, Y_SIZE_SLIDER, TB_INNER, SLIDER_H};

@@ -46,6 +46,8 @@ int main(void) {
     bool  toolbar_hidden = false;
     bool  color_picker_open = false;
     Vector2 picker_pos = {0};
+    bool  line_dragging = false;
+    Vector2 line_start = {0};  // document-space
 
     while (!WindowShouldClose()) {
 
@@ -155,6 +157,14 @@ int main(void) {
                     }
                 }
                 color_picker_open = false;
+            }
+
+            // S held = line tool; release returns to brush
+            if (IsKeyDown(KEY_S)) {
+                app.tools.active_tool = TOOL_LINE;
+            } else if (IsKeyReleased(KEY_S)) {
+                app.tools.active_tool = TOOL_BRUSH;
+                line_dragging = false;
             }
 
             // Space = pan mode; D = brush size scrub; V = zoom scrub; E = eyedropper
@@ -284,18 +294,64 @@ int main(void) {
                                   cpos.y >= 0 && cpos.y < app.canvas.height);
 
                 if (on_canvas) {
-                    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                        Color color = tools_get_draw_color(&app.tools);
-                        canvas_begin_stroke(&app.canvas, color,
-                                            app.tools.brush_radius,
-                                            app.tools.active_tool);
-                        canvas_add_point(&app.canvas, cpos);
-                    } else if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && app.canvas.is_drawing) {
-                        canvas_add_point(&app.canvas, cpos);
+                    if (app.tools.active_tool == TOOL_LINE) {
+                        // Line tool: click to set start, drag to preview, release to commit
+                        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                            line_start = cpos;
+                            line_dragging = true;
+                        }
+                        if (line_dragging && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+                            // Live preview: render a temporary 2-point line stroke
+                            Stroke preview = {0};
+                            preview.color = tools_get_draw_color(&app.tools);
+                            preview.radius = app.tools.brush_radius;
+                            preview.tool = TOOL_LINE;
+                            Vector2 pts[2] = {line_start, cpos};
+                            preview.points = pts;
+                            preview.count = 2;
+
+                            BeginTextureMode(app.canvas.strokes_rt);
+                            ClearBackground(BLANK);
+                            for (int li = 0; li < app.canvas.layer_count; li++) {
+                                if (!app.canvas.layers[li].visible) continue;
+                                Layer *l = &app.canvas.layers[li];
+                                for (int si = 0; si < l->stroke_count; si++)
+                                    render_stroke_transformed(&l->strokes[si],
+                                        app.canvas.view_x, app.canvas.view_y, app.canvas.zoom);
+                            }
+                            render_stroke_transformed(&preview,
+                                app.canvas.view_x, app.canvas.view_y, app.canvas.zoom);
+                            EndTextureMode();
+                            composite_ink(&app.canvas);
+
+                            preview.points = NULL; // don't free stack array
+                        }
+                        if (line_dragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                            // Commit a 2-point stroke
+                            Color color = tools_get_draw_color(&app.tools);
+                            canvas_begin_stroke(&app.canvas, color,
+                                                app.tools.brush_radius,
+                                                TOOL_LINE);
+                            canvas_add_point(&app.canvas, line_start);
+                            canvas_add_point(&app.canvas, cpos);
+                            canvas_end_stroke(&app.canvas);
+                            line_dragging = false;
+                        }
+                    } else {
+                        // Brush/Eraser: freehand drawing
+                        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                            Color color = tools_get_draw_color(&app.tools);
+                            canvas_begin_stroke(&app.canvas, color,
+                                                app.tools.brush_radius,
+                                                app.tools.active_tool);
+                            canvas_add_point(&app.canvas, cpos);
+                        } else if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && app.canvas.is_drawing) {
+                            canvas_add_point(&app.canvas, cpos);
+                        }
                     }
                 }
 
-                if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+                if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && app.tools.active_tool != TOOL_LINE)
                     canvas_end_stroke(&app.canvas);
             }
         }
@@ -305,6 +361,8 @@ int main(void) {
             ClearBackground((Color){25, 25, 25, 255});
 
             canvas_draw(&app.canvas, canvas_x);
+
+
             if (!toolbar_hidden)
                 toolbar_draw(&app.tools, &app.canvas);
 

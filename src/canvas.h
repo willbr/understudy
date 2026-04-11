@@ -86,6 +86,10 @@ void canvas_draw_minimap(const Canvas *c, float alpha, int x_offset);
 
 void canvas_draw(const Canvas *c, int x_offset);
 
+// Low-level rendering (used by line tool preview)
+void render_stroke_transformed(const Stroke *s, float vx, float vy, float zoom);
+void composite_ink(Canvas *c);
+
 // Layer management
 int  canvas_add_layer(Canvas *c);                          // returns index or -1
 void canvas_delete_layer(Canvas *c, int idx);
