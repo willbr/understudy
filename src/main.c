@@ -48,6 +48,8 @@ int main(void) {
     Vector2 picker_pos = {0};
     bool  line_dragging = false;
     Vector2 line_start = {0};  // document-space
+    bool  zoom_rect_active = false;
+    Vector2 zoom_rect_start = {0};  // screen-space
 
     while (!WindowShouldClose()) {
 
@@ -167,6 +169,11 @@ int main(void) {
                 line_dragging = false;
             }
 
+            // Z = zoom rect (hold Z, drag rect, release to zoom to fit)
+            bool zoom_rect_key = IsKeyDown(KEY_Z) &&
+                                 !IsKeyDown(KEY_LEFT_SUPER) && !IsKeyDown(KEY_RIGHT_SUPER) &&
+                                 !IsKeyDown(KEY_LEFT_CONTROL) && !IsKeyDown(KEY_RIGHT_CONTROL);
+
             // Space = pan mode; D = brush size scrub; V = zoom scrub; E = eyedropper
             bool space = IsKeyDown(KEY_SPACE);
             bool sizing = IsKeyDown(KEY_D);
@@ -281,7 +288,48 @@ int main(void) {
                 }
                 if (app.canvas.is_drawing)
                     canvas_end_stroke(&app.canvas);
+            } else if (zoom_rect_key) {
+                SetMouseCursor(MOUSE_CURSOR_CROSSHAIR);
+                if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && mouse.x >= canvas_x) {
+                    zoom_rect_start = mouse;
+                    zoom_rect_active = true;
+                }
+                if (zoom_rect_active && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                    // Compute the selected rectangle in screen space
+                    float x1 = fminf(zoom_rect_start.x, mouse.x);
+                    float y1 = fminf(zoom_rect_start.y, mouse.y);
+                    float x2 = fmaxf(zoom_rect_start.x, mouse.x);
+                    float y2 = fmaxf(zoom_rect_start.y, mouse.y);
+                    float rw = x2 - x1, rh = y2 - y1;
+
+                    if (rw > 5 && rh > 5) {
+                        // Center of selection in document space
+                        float cx = (((x1 + x2) * 0.5f) - canvas_x - app.canvas.view_x) / app.canvas.zoom;
+                        float cy = (((y1 + y2) * 0.5f) - CANVAS_Y - app.canvas.view_y) / app.canvas.zoom;
+
+                        // Compute zoom to fit the rect
+                        int panel_w = app.canvas.rt.texture.width;
+                        int panel_h = app.canvas.rt.texture.height;
+                        float doc_w = rw / app.canvas.zoom;
+                        float doc_h = rh / app.canvas.zoom;
+                        float new_zoom = fminf((float)panel_w / doc_w, (float)panel_h / doc_h);
+                        if (new_zoom < 0.05f) new_zoom = 0.05f;
+                        if (new_zoom > 32.0f) new_zoom = 32.0f;
+
+                        // Center the view on the selection
+                        app.canvas.view_x = (float)panel_w * 0.5f - cx * new_zoom;
+                        app.canvas.view_y = (float)panel_h * 0.5f - cy * new_zoom;
+                        app.canvas.zoom   = new_zoom;
+
+                        canvas_redraw_for_view(&app.canvas);
+                        minimap_t = 2.5f;
+                    }
+                    zoom_rect_active = false;
+                }
+                if (app.canvas.is_drawing)
+                    canvas_end_stroke(&app.canvas);
             } else {
+                zoom_rect_active = false;
                 SetMouseCursor(MOUSE_CURSOR_DEFAULT);
 
                 // Canvas stroke input (writes to RenderTexture)
@@ -362,6 +410,18 @@ int main(void) {
 
             canvas_draw(&app.canvas, canvas_x);
 
+            // Zoom rect preview
+            if (zoom_rect_active && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+                Vector2 m = GetMousePosition();
+                float x1 = fminf(zoom_rect_start.x, m.x);
+                float y1 = fminf(zoom_rect_start.y, m.y);
+                float rw = fabsf(m.x - zoom_rect_start.x);
+                float rh = fabsf(m.y - zoom_rect_start.y);
+                DrawRectangleLinesEx((Rectangle){x1, y1, rw, rh}, 1.5f,
+                                     (Color){255, 200, 50, 220});
+                DrawRectangle((int)x1, (int)y1, (int)rw, (int)rh,
+                              (Color){255, 200, 50, 30});
+            }
 
             if (!toolbar_hidden)
                 toolbar_draw(&app.tools, &app.canvas);
@@ -457,7 +517,8 @@ int main(void) {
                     DrawRectangle(tx - 3, ty - 2, tw + 6, 20,
                                   (Color){30, 30, 30, 200});
                     DrawUI(sz, tx, ty, 16, WHITE);
-                } else if (app.ui.mode == UI_NONE && !panning && m.x >= canvas_x) {
+                } else if (app.ui.mode == UI_NONE && !panning &&
+                           !IsKeyDown(KEY_Z) && !IsKeyDown(KEY_E) && m.x >= canvas_x) {
                     HideCursor();
                     float r = fmaxf(1.5f, (float)app.tools.brush_radius * app.canvas.zoom);
                     // Dark outline + white inline for contrast on any background
