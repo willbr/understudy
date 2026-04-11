@@ -40,6 +40,8 @@ int main(void) {
     float minimap_t = 0.0f;  // countdown; minimap visible while > 0
     bool  was_sizing = false;
     Vector2 size_anchor = {0}; // mouse position when D was pressed
+    bool  was_zooming = false;
+    Vector2 zoom_anchor = {0};
     bool  toolbar_hidden = false;
     bool  color_picker_open = false;
     Vector2 picker_pos = {0};
@@ -132,12 +134,17 @@ int main(void) {
                 color_picker_open = false;
             }
 
-            // Space = pan mode; D = brush size scrub; otherwise draw
+            // Space = pan mode; D = brush size scrub; V = zoom scrub; otherwise draw
             bool space = IsKeyDown(KEY_SPACE);
             bool sizing = IsKeyDown(KEY_D);
+            bool zooming = IsKeyDown(KEY_V);
             if (was_sizing && !sizing) {
                 ShowCursor();
                 was_sizing = false;
+            }
+            if (was_zooming && !zooming) {
+                ShowCursor();
+                was_zooming = false;
             }
 
             // Scroll wheel → zoom anchored on cursor
@@ -191,6 +198,34 @@ int main(void) {
                 app.tools.brush_radius += (int)(dx * 0.15f);
                 if (app.tools.brush_radius < 1)  app.tools.brush_radius = 1;
                 if (app.tools.brush_radius > 200) app.tools.brush_radius = 200;
+                if (app.canvas.is_drawing)
+                    canvas_end_stroke(&app.canvas);
+            } else if (zooming) {
+                // Lock cursor; horizontal drag scrubs zoom anchored on cursor
+                if (!was_zooming) {
+                    zoom_anchor = GetMousePosition();
+                    HideCursor();
+                    was_zooming = true;
+                }
+                float dx = GetMouseDelta().x;
+                SetMousePosition((int)zoom_anchor.x, (int)zoom_anchor.y);
+
+                if (dx != 0.0f) {
+                    float old_zoom = app.canvas.zoom;
+                    float new_zoom = old_zoom * powf(1.01f, dx);
+                    if (new_zoom < 0.05f) new_zoom = 0.05f;
+                    if (new_zoom > 32.0f) new_zoom = 32.0f;
+
+                    // Anchor zoom on the cursor position
+                    float cx = (zoom_anchor.x - canvas_x - app.canvas.view_x) / old_zoom;
+                    float cy = (zoom_anchor.y - CANVAS_Y - app.canvas.view_y) / old_zoom;
+                    app.canvas.view_x = zoom_anchor.x - canvas_x - cx * new_zoom;
+                    app.canvas.view_y = zoom_anchor.y - CANVAS_Y - cy * new_zoom;
+                    app.canvas.zoom   = new_zoom;
+
+                    canvas_redraw_for_view(&app.canvas);
+                    minimap_t = 2.5f;
+                }
                 if (app.canvas.is_drawing)
                     canvas_end_stroke(&app.canvas);
             } else {
