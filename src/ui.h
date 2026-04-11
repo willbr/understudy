@@ -13,6 +13,7 @@ typedef enum UIMode {
     UI_EXPORT_DIALOG,
     UI_CROP_MODE,
     UI_RESIZE_DIALOG,
+    UI_HELP,
 } UIMode;
 
 typedef struct {

@@ -573,6 +573,50 @@ static void resize_dialog_draw(const UIState *u) {
     ui_button(r_cancel, "Cancel");
 }
 
+// ── Help Overlay ──────────────────────────────────────────────────────────────
+
+static void help_update(UIState *u) {
+    if (IsKeyPressed(KEY_ESCAPE) || IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+        u->mode = UI_NONE;
+}
+
+static void help_draw(void) {
+    DrawRectangle(0, 0, WIN_W, WIN_H, Fade(BLACK, 0.7f));
+
+    float px = WIN_W / 2.0f - 160;
+    float py = WIN_H / 2.0f - 180;
+    DrawRectangle((int)px, (int)py, 320, 360, (Color){30, 30, 30, 255});
+    DrawRectangleLinesEx((Rectangle){px, py, 320, 360}, 1, GRAY);
+
+    DrawUI("Keyboard Shortcuts", (int)px + 10, (int)py + 10, 16, RAYWHITE);
+
+    int y = (int)py + 40;
+    int lx = (int)px + 16;
+    int rx = (int)px + 120;
+    int gap = 22;
+
+    DrawUI("Space",    lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("Pan canvas",       rx, y, 13, LIGHTGRAY); y += gap;
+    DrawUI("Scroll",   lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("Zoom",             rx, y, 13, LIGHTGRAY); y += gap;
+    DrawUI("V + drag", lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("Scrub zoom",       rx, y, 13, LIGHTGRAY); y += gap;
+    DrawUI("D + drag", lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("Scrub brush size", rx, y, 13, LIGHTGRAY); y += gap;
+    DrawUI("F (hold)", lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("Color picker",     rx, y, 13, LIGHTGRAY); y += gap;
+    DrawUI("E + click",lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("Eyedropper",       rx, y, 13, LIGHTGRAY); y += gap;
+    DrawUI("Cmd/Ctrl+Z",lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("Undo",             rx, y, 13, LIGHTGRAY); y += gap;
+    DrawUI("Tab",      lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("Toggle toolbar",   rx, y, 13, LIGHTGRAY); y += gap;
+    DrawUI("?",        lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("This help",        rx, y, 13, LIGHTGRAY); y += gap + 10;
+
+    DrawUI("Click or Esc to close", (int)px + 70, y, 12, (Color){80, 80, 80, 255});
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 void ui_update(UIState *u, Canvas *canvas, sqlite3 *db, int canvas_x) {
@@ -585,6 +629,7 @@ void ui_update(UIState *u, Canvas *canvas, sqlite3 *db, int canvas_x) {
         case UI_EXPORT_DIALOG: export_dialog_update(u, canvas);   break;
         case UI_CROP_MODE:     crop_mode_update(u, canvas, canvas_x); break;
         case UI_RESIZE_DIALOG: resize_dialog_update(u, canvas);   break;
+        case UI_HELP:          help_update(u); break;
         default: break;
     }
 }
@@ -597,6 +642,7 @@ void ui_draw(const UIState *u, const Canvas *c, int canvas_x) {
         case UI_EXPORT_DIALOG: export_dialog_draw(u); break;
         case UI_CROP_MODE:     crop_mode_draw(u, c, canvas_x); break;
         case UI_RESIZE_DIALOG: resize_dialog_draw(u); break;
+        case UI_HELP:          help_draw(); break;
         default: break;
     }
 }
