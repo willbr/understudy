@@ -59,6 +59,23 @@ void refimage_set_selected(int idx);  // clamps; -1 to deselect
 // Returns 1 and clears the flag if the user just released a manipulation.
 int  refimage_consume_dirty(void);
 
+// Toolbar-facing ops.
+void refimage_rename(int idx, const char *name);         // clamps to 63 chars
+void refimage_toggle_locked(int idx);
+void refimage_toggle_visible(int idx);
+void refimage_select(int idx);                            // no-op if out of range; -1 to deselect
+
+// Inline rename state (managed by whoever draws the refs panel).
+// Returns true iff an image is currently being renamed via inline UI.
+bool refimage_rename_active(void);
+int  refimage_rename_index(void);
+void refimage_rename_begin(int idx);
+void refimage_rename_commit(void);
+void refimage_rename_cancel(void);
+char *refimage_rename_buffer(void);  // mutable pointer into internal 64-char buffer
+int   refimage_rename_buffer_len(void);
+void  refimage_rename_buffer_set_len(int len);
+
 void refimage_draw_selection_overlay(int canvas_x, int canvas_y,
                                      float view_x, float view_y, float zoom);
 
@@ -85,6 +102,9 @@ typedef struct {
     float rot_start_angle;       // mouse angle at grab time
     float rot_start_rot;         // r->rotation at grab time
     bool slider_dragging;        // mouse held on opacity slider
+    int   renaming_idx;           // -1 = no rename active
+    char  rename_buf[64];
+    int   rename_buf_len;
 } RefImageList;
 
 static RefImageList g_refs;
@@ -104,6 +124,9 @@ void refimage_init(void) {
     g_refs.rot_start_angle = 0;
     g_refs.rot_start_rot = 0;
     g_refs.slider_dragging = false;
+    g_refs.renaming_idx = -1;
+    g_refs.rename_buf[0] = '\0';
+    g_refs.rename_buf_len = 0;
 }
 
 static void free_item(RefImage *r) {
@@ -365,12 +388,14 @@ bool refimage_update(int canvas_x, int canvas_y,
         }
     }
 
-    if (g_refs.selected != -1 && IsKeyPressed(KEY_ESCAPE) && g_refs.mode == REF_IDLE) {
+    if (g_refs.selected != -1 && IsKeyPressed(KEY_ESCAPE) && g_refs.mode == REF_IDLE &&
+        g_refs.renaming_idx < 0) {
         g_refs.selected = -1;
         return true;
     }
 
     if (g_refs.selected != -1 && g_refs.mode == REF_IDLE &&
+        g_refs.renaming_idx < 0 &&
         (IsKeyPressed(KEY_DELETE) || IsKeyPressed(KEY_BACKSPACE))) {
         RefImage *r = &g_refs.items[g_refs.selected];
         free_item(r);
@@ -393,7 +418,8 @@ bool refimage_update(int canvas_x, int canvas_y,
         Rectangle toggle_above = {pr.x + 12, pr.y + 36, (pr.width - 36) * 0.5f, 20};
         Rectangle toggle_below = {toggle_above.x + toggle_above.width + 4,
                                   pr.y + 36, toggle_above.width, 20};
-        Rectangle del_btn = {pr.x + pr.width - 30, pr.y + pr.height - 26, 22, 20};
+        Rectangle lock_btn = {pr.x + pr.width - 58, pr.y + pr.height - 26, 22, 20};
+        Rectangle del_btn  = {pr.x + pr.width - 30, pr.y + pr.height - 26, 22, 20};
 
         // Continue dragging slider (mode stays REF_IDLE; slider_dragging flag)
         if (g_refs.slider_dragging) {
@@ -425,6 +451,11 @@ bool refimage_update(int canvas_x, int canvas_y,
             }
             if (CheckCollisionPointRec(m, toggle_below)) {
                 r->above_strokes = false;
+                g_refs.dirty_after_release = 1;
+                return true;
+            }
+            if (CheckCollisionPointRec(m, lock_btn)) {
+                r->locked = !r->locked;
                 g_refs.dirty_after_release = 1;
                 return true;
             }
@@ -598,10 +629,77 @@ void refimage_draw_panel(int canvas_x, int canvas_y,
     DrawRectangleLinesEx(ta, 1.0f, (Color){80, 80, 80, 255});
     DrawRectangleLinesEx(tb, 1.0f, (Color){80, 80, 80, 255});
 
-    // Delete button
+    // Lock + Delete buttons
+    Rectangle lock_r = {pr.x + pr.width - 58, pr.y + pr.height - 26, 22, 20};
     Rectangle del = {pr.x + pr.width - 30, pr.y + pr.height - 26, 22, 20};
+    DrawRectangleRec(lock_r,
+                     r->locked ? (Color){200, 140, 40, 255} : (Color){60, 60, 60, 255});
+    DrawRectangleLinesEx(lock_r, 1.0f, (Color){120, 120, 120, 255});
     DrawRectangleRec(del, (Color){120, 40, 40, 255});
     DrawRectangleLinesEx(del, 1.0f, (Color){200, 80, 80, 255});
+}
+
+void refimage_rename(int idx, const char *name) {
+    if (idx < 0 || idx >= g_refs.count || !name) return;
+    RefImage *r = &g_refs.items[idx];
+    size_t n = strlen(name);
+    if (n >= sizeof(r->name)) n = sizeof(r->name) - 1;
+    memcpy(r->name, name, n);
+    r->name[n] = '\0';
+    g_refs.dirty_after_release = 1;
+}
+
+void refimage_toggle_locked(int idx) {
+    if (idx < 0 || idx >= g_refs.count) return;
+    g_refs.items[idx].locked = !g_refs.items[idx].locked;
+    g_refs.dirty_after_release = 1;
+}
+
+void refimage_toggle_visible(int idx) {
+    if (idx < 0 || idx >= g_refs.count) return;
+    g_refs.items[idx].visible = !g_refs.items[idx].visible;
+    g_refs.dirty_after_release = 1;
+}
+
+void refimage_select(int idx) {
+    if (idx < -1 || idx >= g_refs.count) return;
+    g_refs.selected = idx;
+}
+
+bool refimage_rename_active(void) { return g_refs.renaming_idx >= 0; }
+int  refimage_rename_index(void) { return g_refs.renaming_idx; }
+
+void refimage_rename_begin(int idx) {
+    if (idx < 0 || idx >= g_refs.count) return;
+    g_refs.renaming_idx = idx;
+    size_t n = strlen(g_refs.items[idx].name);
+    if (n >= sizeof(g_refs.rename_buf)) n = sizeof(g_refs.rename_buf) - 1;
+    memcpy(g_refs.rename_buf, g_refs.items[idx].name, n);
+    g_refs.rename_buf[n] = '\0';
+    g_refs.rename_buf_len = (int)n;
+}
+
+void refimage_rename_commit(void) {
+    if (g_refs.renaming_idx < 0) return;
+    refimage_rename(g_refs.renaming_idx, g_refs.rename_buf);
+    g_refs.renaming_idx = -1;
+    g_refs.rename_buf[0] = '\0';
+    g_refs.rename_buf_len = 0;
+}
+
+void refimage_rename_cancel(void) {
+    g_refs.renaming_idx = -1;
+    g_refs.rename_buf[0] = '\0';
+    g_refs.rename_buf_len = 0;
+}
+
+char *refimage_rename_buffer(void) { return g_refs.rename_buf; }
+int   refimage_rename_buffer_len(void) { return g_refs.rename_buf_len; }
+void  refimage_rename_buffer_set_len(int len) {
+    if (len < 0) len = 0;
+    if ((size_t)len >= sizeof(g_refs.rename_buf)) len = (int)sizeof(g_refs.rename_buf) - 1;
+    g_refs.rename_buf_len = len;
+    g_refs.rename_buf[len] = '\0';
 }
 
 #endif // REFIMAGE_IMPLEMENTATION

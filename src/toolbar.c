@@ -2,6 +2,7 @@
 #include "canvas.h"
 #include "font.h"
 #include "rlgl.h"
+#include "refimage.h"
 
 #include <stdio.h>
 
@@ -35,6 +36,12 @@
 #define LAYER_ROW_H     24
 #define MAX_VISIBLE_LAYERS 5
 #define Y_LAYER_BTNS   (Y_LAYER_LIST + MAX_VISIBLE_LAYERS * LAYER_ROW_H + 4)
+
+// References panel
+#define REF_ROW_H      24
+#define MAX_VISIBLE_REFS 4
+#define Y_REF_LABEL    (Y_LAYER_BTNS + 32)
+#define Y_REF_LIST     (Y_REF_LABEL + 18)
 
 #define SWATCH_COLS  4
 #define SWATCH_ROWS  3
@@ -80,6 +87,7 @@ static bool small_button(Rectangle r, const char *label) {
 // ── Scroll state ─────────────────────────────────────────────────────────────
 static int tb_scroll = 0;
 static int layer_scroll = 0;  // scroll offset for layer list
+static int ref_scroll = 0;    // scroll offset for refs list
 
 // Draw a vertical scrollbar. Returns true if content is scrolled.
 static void draw_scrollbar(float x, float y, float height,
@@ -259,11 +267,64 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
     small_button((Rectangle){TB_PAD + 2*(bw+4),  by, bw, 20}, "^");
     small_button((Rectangle){TB_PAD + 3*(bw+4),  by, bw, 20}, "v");
 
+    // ── References panel ─────────────────────────────────────────────────────
+    {
+        int n_refs = refimage_count();
+        char lbl[32];
+        snprintf(lbl, sizeof(lbl), "References (%d)", n_refs);
+        DrawUI(lbl, TB_PAD, Y_REF_LABEL, 13, LIGHTGRAY);
+
+        int max_ref_scroll = n_refs - MAX_VISIBLE_REFS;
+        if (max_ref_scroll < 0) max_ref_scroll = 0;
+        if (ref_scroll > max_ref_scroll) ref_scroll = max_ref_scroll;
+        if (ref_scroll < 0) ref_scroll = 0;
+
+        int ref_visible = n_refs < MAX_VISIBLE_REFS ? n_refs : MAX_VISIBLE_REFS;
+        int selected_ref = refimage_selected();
+        int renaming_ref = refimage_rename_active() ? refimage_rename_index() : -1;
+
+        for (int i = 0; i < ref_visible; i++) {
+            int ri = n_refs - 1 - i - ref_scroll;  // top-down, newest first
+            if (ri < 0 || ri >= n_refs) continue;
+            RefImage *r = refimage_get(ri);
+            float ry = Y_REF_LIST + i * REF_ROW_H;
+            Rectangle row = {TB_PAD, ry, TB_INNER, REF_ROW_H - 2};
+
+            Color bg = (ri == selected_ref)
+                       ? (Color){50, 70, 120, 255}
+                       : (Color){50, 50, 50, 255};
+            DrawRectangleRec(row, bg);
+            DrawRectangleLinesEx(row, 1, (Color){70, 70, 70, 255});
+
+            // Visibility indicator (click target)
+            const char *vis = r->visible ? "O" : "-";
+            DrawUI(vis, (int)row.x + 4, (int)ry + 5, 12,
+                   r->visible ? GREEN : (Color){80, 80, 80, 255});
+
+            // Lock indicator
+            const char *lock = r->locked ? "L" : "-";
+            DrawUI(lock, (int)row.x + 20, (int)ry + 5, 12,
+                   r->locked ? (Color){220, 160, 50, 255} : (Color){80, 80, 80, 255});
+
+            // Name or inline-rename input
+            if (ri == renaming_ref) {
+                char *buf = refimage_rename_buffer();
+                Rectangle name_r = {(float)row.x + 36, (float)ry + 2, row.width - 40, REF_ROW_H - 6};
+                DrawRectangleRec(name_r, (Color){30, 30, 30, 255});
+                DrawRectangleLinesEx(name_r, 1, (Color){180, 180, 80, 255});
+                DrawUI(buf, (int)name_r.x + 4, (int)ry + 5, 12, WHITE);
+            } else {
+                const char *nm = r->name[0] ? r->name : "(unnamed)";
+                DrawUI(nm, (int)row.x + 36, (int)ry + 5, 12, WHITE);
+            }
+        }
+    }
+
     rlPopMatrix();
     EndScissorMode();
 
     // Toolbar scrollbar (right edge, in screen space)
-    int tb_content_h = Y_LAYER_BTNS + 30;
+    int tb_content_h = Y_REF_LIST + MAX_VISIBLE_REFS * REF_ROW_H + 10;
     int tb_visible_h = GetScreenHeight();
     draw_scrollbar(TB_W - 6, 0, (float)tb_visible_h,
                    tb_scroll, tb_content_h, tb_visible_h);
@@ -306,7 +367,7 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
         } else {
             tb_scroll -= (int)(wheel * 30);
             if (tb_scroll < 0) tb_scroll = 0;
-            int max_scroll = Y_LAYER_BTNS + 30 - GetScreenHeight();
+            int max_scroll = Y_REF_LIST + MAX_VISIBLE_REFS * REF_ROW_H + 10 - GetScreenHeight();
             if (max_scroll < 0) max_scroll = 0;
             if (tb_scroll > max_scroll) tb_scroll = max_scroll;
         }
@@ -420,6 +481,103 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
             layer_scroll = active_row;
         if (active_row >= layer_scroll + MAX_VISIBLE_LAYERS)
             layer_scroll = active_row - MAX_VISIBLE_LAYERS + 1;
+    }
+
+    // ── References panel interaction ─────────────────────────────────────────
+    {
+        int n_refs = refimage_count();
+        int ref_visible = n_refs < MAX_VISIBLE_REFS ? n_refs : MAX_VISIBLE_REFS;
+        int renaming = refimage_rename_active() ? refimage_rename_index() : -1;
+
+        // Wheel scrolling over refs list
+        Rectangle ref_area = {TB_PAD, Y_REF_LIST, TB_INNER,
+                              MAX_VISIBLE_REFS * REF_ROW_H};
+        bool over_refs = CheckCollisionPointRec(mouse, ref_area);
+        if (wheel != 0.0f && over_refs && n_refs > MAX_VISIBLE_REFS) {
+            ref_scroll -= (int)wheel;
+            int mrs = n_refs - MAX_VISIBLE_REFS;
+            if (ref_scroll < 0) ref_scroll = 0;
+            if (ref_scroll > mrs) ref_scroll = mrs;
+        }
+
+        for (int i = 0; i < ref_visible; i++) {
+            int ri = n_refs - 1 - i - ref_scroll;
+            if (ri < 0 || ri >= n_refs) continue;
+            float ry = Y_REF_LIST + i * REF_ROW_H;
+            Rectangle row = {TB_PAD, ry, TB_INNER, REF_ROW_H - 2};
+            Rectangle vis_hit  = {row.x,      row.y, 16, row.height};
+            Rectangle lock_hit = {row.x + 16, row.y, 16, row.height};
+            Rectangle name_hit = {row.x + 32, row.y, row.width - 32, row.height};
+
+            if (lpress && CheckCollisionPointRec(mouse, vis_hit)) {
+                refimage_toggle_visible(ri);
+                continue;
+            }
+            if (lpress && CheckCollisionPointRec(mouse, lock_hit)) {
+                refimage_toggle_locked(ri);
+                continue;
+            }
+            if (lpress && CheckCollisionPointRec(mouse, name_hit)) {
+                // Double-click begins rename; single click selects
+                static double last_click_t = 0;
+                static int    last_click_idx = -1;
+                double now = GetTime();
+                if (last_click_idx == ri && now - last_click_t < 0.4) {
+                    refimage_rename_begin(ri);
+                    refimage_select(ri);
+                    last_click_t = 0;
+                    last_click_idx = -1;
+                } else {
+                    // single click selects
+                    refimage_select(ri);
+                    last_click_t = now;
+                    last_click_idx = ri;
+                }
+            }
+        }
+
+        // Inline-rename text input (only when an image is being renamed)
+        if (renaming >= 0) {
+            char *buf = refimage_rename_buffer();
+            int   len = refimage_rename_buffer_len();
+
+            int ch = GetCharPressed();
+            while (ch > 0) {
+                if (ch >= 32 && ch < 127 && len < 62) {
+                    buf[len++] = (char)ch;
+                    buf[len] = '\0';
+                    refimage_rename_buffer_set_len(len);
+                }
+                ch = GetCharPressed();
+            }
+            if (IsKeyPressed(KEY_BACKSPACE) && len > 0) {
+                len--;
+                buf[len] = '\0';
+                refimage_rename_buffer_set_len(len);
+            }
+            if (IsKeyPressed(KEY_ENTER)) {
+                refimage_rename_commit();
+            }
+            if (IsKeyPressed(KEY_ESCAPE)) {
+                refimage_rename_cancel();
+            }
+            // Click anywhere outside the renaming row commits
+            if (lpress) {
+                int idx = refimage_rename_index();
+                if (idx >= 0) {
+                    int row_i = n_refs - 1 - idx - ref_scroll;
+                    if (row_i >= 0 && row_i < ref_visible) {
+                        float ry = Y_REF_LIST + row_i * REF_ROW_H;
+                        Rectangle row = {TB_PAD, ry, TB_INNER, REF_ROW_H - 2};
+                        if (!CheckCollisionPointRec(mouse, row)) {
+                            refimage_rename_commit();
+                        }
+                    } else {
+                        refimage_rename_commit();
+                    }
+                }
+            }
+        }
     }
 
     return ev;
