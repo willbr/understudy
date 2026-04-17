@@ -69,6 +69,9 @@ typedef struct {
     enum { REF_IDLE, REF_MOVING, REF_SCALING, REF_ROTATING } mode;
     float grab_dx, grab_dy;        // mouse offset from image center at grab time (doc coords)
     int   dirty_after_release;     // 1 = trigger autosave on mouse release
+    int   scale_corner;          // 0..3 during REF_SCALING
+    float scale_start_dist;      // doc-space distance from center to corner at grab time
+    float scale_start_scale;     // r->scale at grab time
 } RefImageList;
 
 static RefImageList g_refs;
@@ -82,6 +85,9 @@ void refimage_init(void) {
     g_refs.grab_dx = 0;
     g_refs.grab_dy = 0;
     g_refs.dirty_after_release = 0;
+    g_refs.scale_corner = 0;
+    g_refs.scale_start_dist = 0;
+    g_refs.scale_start_scale = 0;
 }
 
 static void free_item(RefImage *r) {
@@ -211,6 +217,38 @@ static bool point_in_image(const RefImage *r, float dx, float dy) {
     return (lx >= -hw && lx <= hw && ly >= -hh && ly <= hh);
 }
 
+#define HANDLE_SIZE 10.0f   // screen-space px (half-side)
+#define HANDLE_ROT_DIST 24.0f
+
+// Fills 4 corner positions in screen space.
+// Order: TL, TR, BR, BL.
+static void corners_screen(const RefImage *r,
+                           int canvas_x, int canvas_y,
+                           float view_x, float view_y, float zoom,
+                           Vector2 out[4]) {
+    float hw = r->src_w * r->scale * 0.5f;
+    float hh = r->src_h * r->scale * 0.5f;
+    float c = cosf(r->rotation);
+    float s = sinf(r->rotation);
+    Vector2 local[4] = {{-hw, -hh}, {hw, -hh}, {hw, hh}, {-hw, hh}};
+    for (int i = 0; i < 4; i++) {
+        float dx = r->x + local[i].x * c - local[i].y * s;
+        float dy = r->y + local[i].x * s + local[i].y * c;
+        out[i].x = canvas_x + view_x + dx * zoom;
+        out[i].y = canvas_y + view_y + dy * zoom;
+    }
+}
+
+// Returns 0..3 if mouse m is over a corner handle, -1 otherwise.
+static int hit_corner(const Vector2 corners[4], Vector2 m) {
+    for (int i = 0; i < 4; i++) {
+        if (fabsf(m.x - corners[i].x) <= HANDLE_SIZE &&
+            fabsf(m.y - corners[i].y) <= HANDLE_SIZE)
+            return i;
+    }
+    return -1;
+}
+
 bool refimage_update(int canvas_x, int canvas_y,
                      float view_x, float view_y, float zoom,
                      int panel_w, int panel_h) {
@@ -219,7 +257,6 @@ bool refimage_update(int canvas_x, int canvas_y,
     float dx, dy;
     screen_to_doc(m.x, m.y, canvas_x, canvas_y, view_x, view_y, zoom, &dx, &dy);
 
-    // Escape deselects (only when idle)
     if (g_refs.selected != -1 && IsKeyPressed(KEY_ESCAPE) && g_refs.mode == REF_IDLE) {
         g_refs.selected = -1;
         return true;
@@ -237,8 +274,42 @@ bool refimage_update(int canvas_x, int canvas_y,
         return true;
     }
 
-    // Mouse press: hit-test and start drag or deselect
+    // Active drag (scale)
+    if (g_refs.mode == REF_SCALING && g_refs.selected >= 0) {
+        RefImage *r = &g_refs.items[g_refs.selected];
+        float ddx = dx - r->x;
+        float ddy = dy - r->y;
+        float dist = sqrtf(ddx * ddx + ddy * ddy);
+        float ratio = dist / g_refs.scale_start_dist;
+        r->scale = g_refs.scale_start_scale * ratio;
+        if (r->scale < 0.05f) r->scale = 0.05f;
+        if (r->scale > 20.0f) r->scale = 20.0f;
+        if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+            g_refs.mode = REF_IDLE;
+            g_refs.dirty_after_release = 1;
+        }
+        return true;
+    }
+
+    // Mouse press: check handles on selected, then body hit-test
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        if (g_refs.selected >= 0) {
+            RefImage *r = &g_refs.items[g_refs.selected];
+            Vector2 cor[4];
+            corners_screen(r, canvas_x, canvas_y, view_x, view_y, zoom, cor);
+            int c = hit_corner(cor, m);
+            if (c >= 0) {
+                g_refs.mode = REF_SCALING;
+                g_refs.scale_corner = c;
+                float ddx = dx - r->x;
+                float ddy = dy - r->y;
+                g_refs.scale_start_dist = sqrtf(ddx * ddx + ddy * ddy);
+                if (g_refs.scale_start_dist < 1.0f) g_refs.scale_start_dist = 1.0f;
+                g_refs.scale_start_scale = r->scale;
+                return true;
+            }
+        }
+
         int hit = -1;
         for (int i = g_refs.count - 1; i >= 0; i--) {
             if (point_in_image(&g_refs.items[i], dx, dy)) { hit = i; break; }
@@ -273,27 +344,20 @@ void refimage_draw_selection_overlay(int canvas_x, int canvas_y,
     if (g_refs.selected < 0 || g_refs.selected >= g_refs.count) return;
     RefImage *r = &g_refs.items[g_refs.selected];
 
-    float hw = r->src_w * r->scale * 0.5f;
-    float hh = r->src_h * r->scale * 0.5f;
-    float c = cosf(r->rotation);
-    float s = sinf(r->rotation);
+    Vector2 cor[4];
+    corners_screen(r, canvas_x, canvas_y, view_x, view_y, zoom, cor);
 
-    Vector2 corners_local[4] = {
-        {-hw, -hh}, { hw, -hh}, { hw,  hh}, {-hw,  hh}
-    };
-    Vector2 corners_screen[4];
-    for (int i = 0; i < 4; i++) {
-        float lx = corners_local[i].x;
-        float ly = corners_local[i].y;
-        float wx = r->x + lx * c - ly * s;
-        float wy = r->y + lx * s + ly * c;
-        corners_screen[i].x = canvas_x + view_x + wx * zoom;
-        corners_screen[i].y = canvas_y + view_y + wy * zoom;
-    }
-
+    // Rectangle outline
     for (int i = 0; i < 4; i++)
-        DrawLineEx(corners_screen[i], corners_screen[(i + 1) % 4], 1.5f,
-                   (Color){0, 0, 0, 180});
+        DrawLineEx(cor[i], cor[(i + 1) % 4], 1.5f, (Color){0, 0, 0, 180});
+
+    // Corner handles
+    for (int i = 0; i < 4; i++) {
+        Rectangle h = {cor[i].x - HANDLE_SIZE, cor[i].y - HANDLE_SIZE,
+                       HANDLE_SIZE * 2.0f, HANDLE_SIZE * 2.0f};
+        DrawRectangleRec(h, WHITE);
+        DrawRectangleLinesEx(h, 1.0f, (Color){0, 0, 0, 200});
+    }
 }
 
 #endif // REFIMAGE_IMPLEMENTATION
