@@ -9,7 +9,6 @@ uniform vec2 viewOffset;
 uniform float zoom;
 uniform vec2 resolution;
 
-// Noise functions
 float hash(vec2 p) {
     vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
     p3 += dot(p3, p3.yzx + 33.33);
@@ -39,76 +38,38 @@ float fbm(vec2 p) {
     return v;
 }
 
-// Paper color (same as standalone paper shader)
-vec3 paperColor(vec2 docCoord) {
-    vec2 uv = docCoord / 8.0;
-    float fibers = fbm(vec2(uv.x * 0.3, uv.y * 0.6) + vec2(3.7, 1.2));
-    float bumps = fbm(uv * 0.8 + vec2(7.3, 2.8));
-    float grain = noise(uv * 2.0 + vec2(13.1, 5.5));
-    float paper = fibers * 0.45 + bumps * 0.35 + grain * 0.2;
-    float base = 0.92;
-    float variation = 0.12;
-    float v = base + (paper - 0.5) * variation;
-    v = clamp(v, 0.82, 0.98);
-    return vec3(v, v * 0.995, v * 0.97);
-}
-
 void main() {
     vec4 stroke = texture(texture0, fragTexCoord);
 
-    // Document-space coordinate
-    vec2 screenPos = vec2(gl_FragCoord.x, resolution.y - gl_FragCoord.y);
-    vec2 docCoord = (screenPos - viewOffset) / zoom;
-
-    // Outside document bounds
-    if (docCoord.x < 0.0 || docCoord.x > docSize.x ||
-        docCoord.y < 0.0 || docCoord.y > docSize.y) {
-        finalColor = vec4(0.176, 0.176, 0.176, 1.0);
-        return;
-    }
-
-    // Paper background
-    vec3 paper = paperColor(docCoord);
-
-    // No ink — show paper (use alpha to detect stroke presence)
+    // No ink → fully transparent (lets whatever is under this RT show through)
     if (stroke.a < 0.01) {
-        finalColor = vec4(paper, 1.0);
+        finalColor = vec4(0.0);
         return;
     }
 
-    // === Watercolor effect ===
+    // Document-space coordinate (for grain lookup only)
+    vec2 screenPos = vec2(gl_FragCoord.x, resolution.y - gl_FragCoord.y);
+    vec2 docCoord  = (screenPos - viewOffset) / zoom;
 
-    // Paper grain — use for edge roughness, not to dull the color
-    float grain = fbm(docCoord / 6.0 + vec2(7.3, 2.8));
-
-    // Edge detection: use alpha of neighbors to find stroke boundary
+    // Edge detection: neighbour alpha to find stroke boundary
     vec2 px = 1.0 / resolution;
     float nl = texture(texture0, fragTexCoord + vec2(-px.x, 0.0)).a;
     float nr = texture(texture0, fragTexCoord + vec2( px.x, 0.0)).a;
     float nt = texture(texture0, fragTexCoord + vec2(0.0,  px.y)).a;
     float nb = texture(texture0, fragTexCoord + vec2(0.0, -px.y)).a;
-
     float minN = min(min(nl, nr), min(nt, nb));
     float isEdge = 1.0 - smoothstep(0.0, 0.4, minN / max(stroke.a, 0.001));
 
-    // At edges: paper grain eats into the stroke (rough watercolor boundary)
+    // Paper grain erodes the stroke edge for a watercolor look
+    float grain = fbm(docCoord / 6.0 + vec2(7.3, 2.8));
     float edgeErosion = smoothstep(0.3, 0.7, grain) * isEdge;
 
-    // Subtle color concentration variation (pigment pooling)
+    // Pigment pooling: subtle concentration variation
     float pooling = noise(docCoord / 20.0 + vec2(42.0, 17.0));
-    // Slightly more saturated/darker where pooling is high
     float concentrate = mix(0.95, 1.05, pooling);
-
-    // Final ink color: keep it vibrant, just slightly modulate
     vec3 inkColor = stroke.rgb * concentrate;
 
-    // Alpha: full opacity in center, grain-eroded at edges
-    float alpha = 1.0 - edgeErosion * 0.6;
-
-    // Very subtle paper show-through in the stroke body (like real watercolor)
-    float paperShow = grain * 0.08;  // only 8% paper bleed-through max
-    inkColor = mix(inkColor, paper * inkColor, paperShow);
-
-    // Blend ink over paper
-    finalColor = vec4(mix(paper, inkColor, alpha), 1.0);
+    // Output ink with alpha reduced at edges — background shows through at edges
+    float alpha = (1.0 - edgeErosion * 0.6) * stroke.a;
+    finalColor = vec4(inkColor, alpha);
 }
