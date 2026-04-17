@@ -128,6 +128,8 @@ int main(void) {
                         refimage_add(bytes, len, img);
                         refimage_set_defaults((float)app.canvas.width,
                                               (float)app.canvas.height);
+                        const char *fname = GetFileName(list.paths[i]);
+                        refimage_set_last_name(fname);
                         app.canvas.dirty = true;
                     }
                     if (bytes) UnloadFileData(bytes);
@@ -148,6 +150,9 @@ int main(void) {
                             refimage_add(png, len, img);
                             refimage_set_defaults((float)app.canvas.width,
                                                   (float)app.canvas.height);
+                            char pname[32];
+                            snprintf(pname, sizeof(pname), "Pasted %d", refimage_count());
+                            refimage_set_last_name(pname);
                             app.canvas.dirty = true;
                         }
                         if (png) MemFree(png);

@@ -51,6 +51,9 @@ static const char *SCHEMA_SQL =
     "  rotation      REAL    NOT NULL,"
     "  opacity       REAL    NOT NULL,"
     "  above_strokes INTEGER NOT NULL,"
+    "  name          TEXT    NOT NULL DEFAULT '',"
+    "  locked        INTEGER NOT NULL DEFAULT 0,"
+    "  visible       INTEGER NOT NULL DEFAULT 1,"
     "  png_blob      BLOB    NOT NULL"
     ");"
     "CREATE INDEX IF NOT EXISTS idx_ref_images_painting "
@@ -58,7 +61,7 @@ static const char *SCHEMA_SQL =
 
 // ── Open/close ────────────────────────────────────────────────────────────────
 
-#define SCHEMA_VERSION 4
+#define SCHEMA_VERSION 5
 
 static bool migrate(sqlite3 *db) {
     sqlite3_stmt *stmt;
@@ -206,8 +209,9 @@ int db_save_painting(sqlite3 *db, const char *name,
     if (ref_count > 0 && refs) {
         const char *ins_ref =
             "INSERT INTO ref_images "
-            "(painting_id, image_idx, x, y, scale, rotation, opacity, above_strokes, png_blob) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);";
+            "(painting_id, image_idx, x, y, scale, rotation, opacity, above_strokes, "
+            "name, locked, visible, png_blob) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
         sqlite3_stmt *ref_stmt;
         if (sqlite3_prepare_v2(db, ins_ref, -1, &ref_stmt, NULL) != SQLITE_OK) {
             goto fail;
@@ -223,7 +227,10 @@ int db_save_painting(sqlite3 *db, const char *name,
             sqlite3_bind_double(ref_stmt, 6, r->rotation);
             sqlite3_bind_double(ref_stmt, 7, r->opacity);
             sqlite3_bind_int   (ref_stmt, 8, r->above_strokes ? 1 : 0);
-            sqlite3_bind_blob  (ref_stmt, 9, r->png_bytes, r->png_len, SQLITE_TRANSIENT);
+            sqlite3_bind_text  (ref_stmt, 9, r->name, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int   (ref_stmt, 10, r->locked ? 1 : 0);
+            sqlite3_bind_int   (ref_stmt, 11, r->visible ? 1 : 0);
+            sqlite3_bind_blob  (ref_stmt, 12, r->png_bytes, r->png_len, SQLITE_TRANSIENT);
             if (sqlite3_step(ref_stmt) != SQLITE_DONE) {
                 sqlite3_finalize(ref_stmt);
                 goto fail;
@@ -445,8 +452,9 @@ int db_save_ref_images(sqlite3 *db, int painting_id,
     const char *del = "DELETE FROM ref_images WHERE painting_id = ?;";
     const char *ins =
         "INSERT INTO ref_images "
-        "(painting_id, image_idx, x, y, scale, rotation, opacity, above_strokes, png_blob) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);";
+        "(painting_id, image_idx, x, y, scale, rotation, opacity, above_strokes, "
+        "name, locked, visible, png_blob) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
 
     if (sqlite3_prepare_v2(db, del, -1, &del_stmt, NULL) != SQLITE_OK) return -1;
     sqlite3_bind_int(del_stmt, 1, painting_id);
@@ -469,7 +477,10 @@ int db_save_ref_images(sqlite3 *db, int painting_id,
         sqlite3_bind_double(ins_stmt, 6, r->rotation);
         sqlite3_bind_double(ins_stmt, 7, r->opacity);
         sqlite3_bind_int   (ins_stmt, 8, r->above_strokes ? 1 : 0);
-        sqlite3_bind_blob  (ins_stmt, 9, r->png_bytes, r->png_len, SQLITE_TRANSIENT);
+        sqlite3_bind_text  (ins_stmt, 9, r->name, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int   (ins_stmt, 10, r->locked ? 1 : 0);
+        sqlite3_bind_int   (ins_stmt, 11, r->visible ? 1 : 0);
+        sqlite3_bind_blob  (ins_stmt, 12, r->png_bytes, r->png_len, SQLITE_TRANSIENT);
 
         if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
             fprintf(stderr, "db_save_ref_images %d: %s\n", i, sqlite3_errmsg(db));
@@ -488,7 +499,8 @@ bool db_load_ref_images(sqlite3 *db, int painting_id,
 
     sqlite3_stmt *stmt;
     const char *sel =
-        "SELECT id, x, y, scale, rotation, opacity, above_strokes, png_blob "
+        "SELECT id, x, y, scale, rotation, opacity, above_strokes, "
+        "name, locked, visible, png_blob "
         "FROM ref_images WHERE painting_id = ? ORDER BY image_idx ASC;";
     if (sqlite3_prepare_v2(db, sel, -1, &stmt, NULL) != SQLITE_OK) return false;
     sqlite3_bind_int(stmt, 1, painting_id);
@@ -510,8 +522,20 @@ bool db_load_ref_images(sqlite3 *db, int painting_id,
         r->opacity       = (float)sqlite3_column_double(stmt, 5);
         r->above_strokes = sqlite3_column_int   (stmt, 6) != 0;
 
-        const void *blob = sqlite3_column_blob(stmt, 7);
-        int blob_len     = sqlite3_column_bytes(stmt, 7);
+        const char *nm = (const char *)sqlite3_column_text(stmt, 7);
+        if (nm) {
+            size_t n = strlen(nm);
+            if (n >= sizeof(r->name)) n = sizeof(r->name) - 1;
+            memcpy(r->name, nm, n);
+            r->name[n] = '\0';
+        } else {
+            r->name[0] = '\0';
+        }
+        r->locked  = sqlite3_column_int(stmt, 8) != 0;
+        r->visible = sqlite3_column_int(stmt, 9) != 0;
+
+        const void *blob = sqlite3_column_blob(stmt, 10);
+        int blob_len     = sqlite3_column_bytes(stmt, 10);
         r->png_bytes = malloc(blob_len);
         memcpy(r->png_bytes, blob, blob_len);
         r->png_len   = blob_len;

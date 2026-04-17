@@ -16,6 +16,9 @@ typedef struct RefImage {
     float rotation;             // radians
     float opacity;              // 0..1
     bool  above_strokes;
+    char  name[64];    // user-editable label
+    bool  locked;      // true = skip hit-test
+    bool  visible;     // true = render
 } RefImage;
 
 void refimage_init(void);
@@ -33,6 +36,9 @@ void refimage_load_from_db(RefImage *arr, int n);
 int  refimage_count(void);
 RefImage *refimage_get(int i);                // mutable; used by db save
 void refimage_set_defaults(float doc_w, float doc_h);
+
+// Set the newly-added (last) image's name. Truncated to 63 chars.
+void refimage_set_last_name(const char *name);
 
 // Draw all images with above_strokes == want_above.
 // All args describe the canvas viewport so images align with doc coords.
@@ -151,6 +157,9 @@ void refimage_add(const unsigned char *png, int png_len, Image decoded) {
     r->rotation = 0.0f;
     r->opacity = 1.0f;
     r->above_strokes = true;
+    r->name[0] = '\0';   // caller should set via refimage_set_last_name
+    r->locked  = false;
+    r->visible = true;
 }
 
 void refimage_load_from_db(RefImage *arr, int n) {
@@ -174,6 +183,15 @@ void refimage_set_defaults(float doc_w, float doc_h) {
     r->scale = (fit < 1.0f) ? fit : 1.0f;
 }
 
+void refimage_set_last_name(const char *name) {
+    if (g_refs.count == 0 || !name) return;
+    RefImage *r = &g_refs.items[g_refs.count - 1];
+    size_t n = strlen(name);
+    if (n >= sizeof(r->name)) n = sizeof(r->name) - 1;
+    memcpy(r->name, name, n);
+    r->name[n] = '\0';
+}
+
 void refimage_draw(bool want_above,
                    int canvas_x, int canvas_y,
                    float view_x, float view_y, float zoom,
@@ -181,6 +199,7 @@ void refimage_draw(bool want_above,
     BeginScissorMode(canvas_x, canvas_y, panel_w, panel_h);
     for (int i = 0; i < g_refs.count; i++) {
         RefImage *r = &g_refs.items[i];
+        if (!r->visible) continue;
         if (r->above_strokes != want_above) continue;
 
         float sx = canvas_x + view_x + r->x * zoom;
@@ -494,6 +513,7 @@ bool refimage_update(int canvas_x, int canvas_y,
 
         int hit = -1;
         for (int i = g_refs.count - 1; i >= 0; i--) {
+            if (g_refs.items[i].locked) continue;
             if (point_in_image(&g_refs.items[i], dx, dy)) { hit = i; break; }
         }
         if (hit != -1) {
