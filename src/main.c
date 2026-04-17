@@ -119,6 +119,26 @@ int main(void) {
                 UnloadDroppedFiles(list);
             }
 
+            {
+                bool cmd = IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER) ||
+                           IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+                if (cmd && IsKeyPressed(KEY_V)) {
+                    Image img = GetClipboardImage();
+                    if (img.data) {
+                        int len = 0;
+                        unsigned char *png = ExportImageToMemory(img, ".png", &len);
+                        if (png && len > 0) {
+                            refimage_add(png, len, img);
+                            refimage_set_defaults((float)app.canvas.width,
+                                                  (float)app.canvas.height);
+                            app.canvas.dirty = true;
+                        }
+                        if (png) MemFree(png);
+                        UnloadImage(img);
+                    }
+                }
+            }
+
             ToolbarEvents ev = {0};
             if (!toolbar_hidden)
                 ev = toolbar_update(&app.tools, &app.canvas);
