@@ -39,11 +39,25 @@ static const char *SCHEMA_SQL =
     "  radius      INTEGER NOT NULL,"
     "  tool        INTEGER NOT NULL,"
     "  points      BLOB    NOT NULL"
-    ");";
+    ");"
+    "CREATE TABLE IF NOT EXISTS ref_images ("
+    "  id            INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  painting_id   INTEGER NOT NULL REFERENCES paintings(id) ON DELETE CASCADE,"
+    "  image_idx     INTEGER NOT NULL,"
+    "  x             REAL    NOT NULL,"
+    "  y             REAL    NOT NULL,"
+    "  scale         REAL    NOT NULL,"
+    "  rotation      REAL    NOT NULL,"
+    "  opacity       REAL    NOT NULL,"
+    "  above_strokes INTEGER NOT NULL,"
+    "  png_blob      BLOB    NOT NULL"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_ref_images_painting "
+    "ON ref_images(painting_id, image_idx);";
 
 // ── Open/close ────────────────────────────────────────────────────────────────
 
-#define SCHEMA_VERSION 3
+#define SCHEMA_VERSION 4
 
 static bool migrate(sqlite3 *db) {
     sqlite3_stmt *stmt;
@@ -59,6 +73,7 @@ static bool migrate(sqlite3 *db) {
         fprintf(stderr, "db: schema version %d -> %d, rebuilding (old data dropped)\n",
                 version, SCHEMA_VERSION);
 
+    sqlite3_exec(db, "DROP TABLE IF EXISTS ref_images;", NULL, NULL, NULL);
     sqlite3_exec(db, "DROP TABLE IF EXISTS strokes;",   NULL, NULL, NULL);
     sqlite3_exec(db, "DROP TABLE IF EXISTS layers;",    NULL, NULL, NULL);
     sqlite3_exec(db, "DROP TABLE IF EXISTS paintings;", NULL, NULL, NULL);
