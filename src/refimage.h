@@ -32,6 +32,7 @@ void refimage_load_from_db(RefImage *arr, int n);
 
 int  refimage_count(void);
 RefImage *refimage_get(int i);                // mutable; used by db save
+void refimage_set_defaults(float doc_w, float doc_h);
 
 #ifdef REFIMAGE_IMPLEMENTATION
 
@@ -114,6 +115,18 @@ void refimage_load_from_db(RefImage *arr, int n) {
     g_refs.count = n;
     // caller gave us ownership of png_bytes; textures were already uploaded
     free(arr);  // the array itself, not the items
+}
+
+// Set the newly-added (last) image's defaults given canvas doc dims.
+void refimage_set_defaults(float doc_w, float doc_h) {
+    if (g_refs.count == 0) return;
+    RefImage *r = &g_refs.items[g_refs.count - 1];
+    r->x = doc_w * 0.5f;
+    r->y = doc_h * 0.5f;
+    float fit_w = (doc_w * 0.6f) / (float)r->src_w;
+    float fit_h = (doc_h * 0.6f) / (float)r->src_h;
+    float fit = fit_w < fit_h ? fit_w : fit_h;
+    r->scale = (fit < 1.0f) ? fit : 1.0f;
 }
 
 #endif // REFIMAGE_IMPLEMENTATION

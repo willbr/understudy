@@ -101,6 +101,24 @@ int main(void) {
 
 
         if (app.ui.mode == UI_NONE) {
+            if (IsFileDropped()) {
+                FilePathList list = LoadDroppedFiles();
+                for (unsigned i = 0; i < list.count; i++) {
+                    int len = 0;
+                    unsigned char *bytes = LoadFileData(list.paths[i], &len);
+                    Image img = LoadImage(list.paths[i]);
+                    if (bytes && img.data && len > 0) {
+                        refimage_add(bytes, len, img);
+                        refimage_set_defaults((float)app.canvas.width,
+                                              (float)app.canvas.height);
+                        app.canvas.dirty = true;
+                    }
+                    if (bytes) UnloadFileData(bytes);
+                    if (img.data) UnloadImage(img);
+                }
+                UnloadDroppedFiles(list);
+            }
+
             ToolbarEvents ev = {0};
             if (!toolbar_hidden)
                 ev = toolbar_update(&app.tools, &app.canvas);
