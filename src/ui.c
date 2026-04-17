@@ -1,5 +1,6 @@
 #include "ui.h"
 #include "font.h"
+#include "refimage.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -58,9 +59,14 @@ static void save_dialog_update(UIState *u, Canvas *canvas, sqlite3 *db) {
 
     if (IsKeyPressed(KEY_ENTER) || ui_button(r_ok, "Save")) {
         if (u->text_len > 0) {
+            int nrefs = refimage_count();
+            RefImage *refs_arr = nrefs > 0 ? malloc(nrefs * sizeof(RefImage)) : NULL;
+            for (int i = 0; i < nrefs; i++) refs_arr[i] = *refimage_get(i);
             db_save_painting(db, u->text_input,
                              canvas->layers, canvas->layer_count,
+                             refs_arr, nrefs,
                              canvas->width, canvas->height);
+            free(refs_arr);
             canvas->dirty = false;
             strncpy(u->last_saved_name, u->text_input, 127);
             u->last_saved_name[127] = '\0';
@@ -162,9 +168,13 @@ static void load_list_update(UIState *u, Canvas *canvas, sqlite3 *db) {
         u->load_selected < u->load_count) {
         PaintingMeta *m = &u->load_list[u->load_selected];
         Layer *layers = NULL;
-        int lcount = 0, w = 0, h = 0;
-        if (db_load_painting(db, m->id, &layers, &lcount, &w, &h)) {
+        int lcount = 0;
+        RefImage *refs_loaded = NULL;
+        int rc = 0;
+        int w = 0, h = 0;
+        if (db_load_painting(db, m->id, &layers, &lcount, &refs_loaded, &rc, &w, &h)) {
             canvas_load_layers(canvas, layers, lcount);
+            refimage_load_from_db(refs_loaded, rc);
             strncpy(u->last_saved_name, m->name, 127);
             u->last_saved_name[127] = '\0';
         }

@@ -92,18 +92,29 @@ int main(void) {
         // Autosave after each stroke ends
         {
             static bool prev_drawing = false;
-            if (prev_drawing && !app.canvas.is_drawing && app.canvas.dirty && app.db)
+            if (prev_drawing && !app.canvas.is_drawing && app.canvas.dirty && app.db) {
+                int nrefs = refimage_count();
+                RefImage *refs_arr = nrefs > 0 ? malloc(nrefs * sizeof(RefImage)) : NULL;
+                for (int i = 0; i < nrefs; i++) refs_arr[i] = *refimage_get(i);
                 db_autosave(app.db, &autosave_id,
                             app.canvas.layers, app.canvas.layer_count,
+                            refs_arr, nrefs,
                             app.canvas.width, app.canvas.height);
+                free(refs_arr);
+            }
             prev_drawing = app.canvas.is_drawing;
         }
 
         if (refimage_consume_dirty() && app.db) {
             app.canvas.dirty = true;
+            int nrefs = refimage_count();
+            RefImage *refs_arr = nrefs > 0 ? malloc(nrefs * sizeof(RefImage)) : NULL;
+            for (int i = 0; i < nrefs; i++) refs_arr[i] = *refimage_get(i);
             db_autosave(app.db, &autosave_id,
                         app.canvas.layers, app.canvas.layer_count,
+                        refs_arr, nrefs,
                         app.canvas.width, app.canvas.height);
+            free(refs_arr);
         }
 
         if (app.ui.mode == UI_NONE) {
@@ -163,6 +174,7 @@ int main(void) {
             // Toolbar button actions
             if (ev.wants_new) {
                 canvas_clear(&app.canvas);
+                refimage_clear();
                 autosave_id = 0;
                 app.canvas_name[0] = '\0';
                 update_title(&app);
@@ -677,10 +689,16 @@ int main(void) {
     }
 
     // ── Cleanup ───────────────────────────────────────────────────────────────
-    if (app.db && app.canvas.dirty)
+    if (app.db && app.canvas.dirty) {
+        int nrefs = refimage_count();
+        RefImage *refs_arr = nrefs > 0 ? malloc(nrefs * sizeof(RefImage)) : NULL;
+        for (int i = 0; i < nrefs; i++) refs_arr[i] = *refimage_get(i);
         db_autosave(app.db, &autosave_id,
                     app.canvas.layers, app.canvas.layer_count,
+                    refs_arr, nrefs,
                     app.canvas.width, app.canvas.height);
+        free(refs_arr);
+    }
     refimage_shutdown();
     ui_free(&app.ui);
     canvas_free(&app.canvas);

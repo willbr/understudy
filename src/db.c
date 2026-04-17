@@ -122,6 +122,7 @@ void db_close(sqlite3 *db) {
 
 int db_save_painting(sqlite3 *db, const char *name,
                      const Layer *layers, int layer_count,
+                     const RefImage *refs, int ref_count,
                      int width, int height) {
     sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
 
@@ -202,6 +203,35 @@ int db_save_painting(sqlite3 *db, const char *name,
         }
     }
 
+    if (ref_count > 0 && refs) {
+        const char *ins_ref =
+            "INSERT INTO ref_images "
+            "(painting_id, image_idx, x, y, scale, rotation, opacity, above_strokes, png_blob) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);";
+        sqlite3_stmt *ref_stmt;
+        if (sqlite3_prepare_v2(db, ins_ref, -1, &ref_stmt, NULL) != SQLITE_OK) {
+            goto fail;
+        }
+        for (int ri = 0; ri < ref_count; ri++) {
+            const RefImage *r = &refs[ri];
+            sqlite3_reset(ref_stmt);
+            sqlite3_bind_int   (ref_stmt, 1, painting_id);
+            sqlite3_bind_int   (ref_stmt, 2, ri);
+            sqlite3_bind_double(ref_stmt, 3, r->x);
+            sqlite3_bind_double(ref_stmt, 4, r->y);
+            sqlite3_bind_double(ref_stmt, 5, r->scale);
+            sqlite3_bind_double(ref_stmt, 6, r->rotation);
+            sqlite3_bind_double(ref_stmt, 7, r->opacity);
+            sqlite3_bind_int   (ref_stmt, 8, r->above_strokes ? 1 : 0);
+            sqlite3_bind_blob  (ref_stmt, 9, r->png_bytes, r->png_len, SQLITE_TRANSIENT);
+            if (sqlite3_step(ref_stmt) != SQLITE_DONE) {
+                sqlite3_finalize(ref_stmt);
+                goto fail;
+            }
+        }
+        sqlite3_finalize(ref_stmt);
+    }
+
     sqlite3_finalize(layer_stmt);
     sqlite3_finalize(stroke_stmt);
     sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
@@ -218,23 +248,23 @@ fail:
 
 void db_autosave(sqlite3 *db, int *autosave_id,
                  const Layer *layers, int layer_count,
+                 const RefImage *refs, int ref_count,
                  int width, int height) {
-    // Delete previous autosave for THIS canvas session
     if (*autosave_id > 0) {
         sqlite3_exec(db, "PRAGMA foreign_keys = ON;", NULL, NULL, NULL);
         char sql[128];
         snprintf(sql, sizeof(sql), "DELETE FROM paintings WHERE id = %d;", *autosave_id);
         sqlite3_exec(db, sql, NULL, NULL, NULL);
     }
-
-    // Save and track the new ID
-    *autosave_id = db_save_painting(db, "_autosave", layers, layer_count, width, height);
+    *autosave_id = db_save_painting(db, "_autosave", layers, layer_count,
+                                    refs, ref_count, width, height);
 }
 
 // ── Load ──────────────────────────────────────────────────────────────────────
 
 bool db_load_painting(sqlite3 *db, int id,
                       Layer **out_layers, int *out_layer_count,
+                      RefImage **out_refs, int *out_ref_count,
                       int *out_width, int *out_height) {
     // Fetch painting dimensions
     sqlite3_stmt *stmt;
@@ -322,6 +352,14 @@ bool db_load_painting(sqlite3 *db, int id,
     free(infos);
     *out_layers      = layers;
     *out_layer_count = lcount;
+
+    if (out_refs && out_ref_count) {
+        if (!db_load_ref_images(db, id, out_refs, out_ref_count)) {
+            *out_refs = NULL;
+            *out_ref_count = 0;
+        }
+    }
+
     return true;
 }
 
