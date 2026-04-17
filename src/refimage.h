@@ -72,6 +72,8 @@ typedef struct {
     int   scale_corner;          // 0..3 during REF_SCALING
     float scale_start_dist;      // doc-space distance from center to corner at grab time
     float scale_start_scale;     // r->scale at grab time
+    float rot_start_angle;       // mouse angle at grab time
+    float rot_start_rot;         // r->rotation at grab time
 } RefImageList;
 
 static RefImageList g_refs;
@@ -88,6 +90,8 @@ void refimage_init(void) {
     g_refs.scale_corner = 0;
     g_refs.scale_start_dist = 0;
     g_refs.scale_start_scale = 0;
+    g_refs.rot_start_angle = 0;
+    g_refs.rot_start_rot = 0;
 }
 
 static void free_item(RefImage *r) {
@@ -249,6 +253,33 @@ static int hit_corner(const Vector2 corners[4], Vector2 m) {
     return -1;
 }
 
+// Rotation handle position in screen space: centered above the top edge midpoint,
+// offset along the image's up-axis (rotated).
+static Vector2 rotation_handle_screen(const RefImage *r,
+                                      int canvas_x, int canvas_y,
+                                      float view_x, float view_y, float zoom) {
+    float hh = r->src_h * r->scale * 0.5f;
+    // Image-local offset: straight up from top edge mid (in doc units);
+    // add HANDLE_ROT_DIST as screen-pixel gap (/ zoom to convert)
+    float local_y = -(hh + HANDLE_ROT_DIST / zoom);
+    float c = cosf(r->rotation);
+    float s = sinf(r->rotation);
+    float dx = r->x + 0 * c - local_y * s;
+    float dy = r->y + 0 * s + local_y * c;
+    return (Vector2){canvas_x + view_x + dx * zoom,
+                     canvas_y + view_y + dy * zoom};
+}
+
+static bool hit_rotation_handle(const RefImage *r,
+                                int canvas_x, int canvas_y,
+                                float view_x, float view_y, float zoom,
+                                Vector2 m) {
+    Vector2 h = rotation_handle_screen(r, canvas_x, canvas_y,
+                                       view_x, view_y, zoom);
+    float dx = m.x - h.x, dy = m.y - h.y;
+    return dx * dx + dy * dy <= 12.0f * 12.0f;
+}
+
 bool refimage_update(int canvas_x, int canvas_y,
                      float view_x, float view_y, float zoom,
                      int panel_w, int panel_h) {
@@ -291,10 +322,31 @@ bool refimage_update(int canvas_x, int canvas_y,
         return true;
     }
 
-    // Mouse press: check handles on selected, then body hit-test
+    // Active drag (rotate)
+    if (g_refs.mode == REF_ROTATING && g_refs.selected >= 0) {
+        RefImage *r = &g_refs.items[g_refs.selected];
+        float ang = atan2f(dy - r->y, dx - r->x);
+        r->rotation = g_refs.rot_start_rot + (ang - g_refs.rot_start_angle);
+        if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+            g_refs.mode = REF_IDLE;
+            g_refs.dirty_after_release = 1;
+        }
+        return true;
+    }
+
+    // Mouse press: check handles on selected (rotation first, then corners), then body
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         if (g_refs.selected >= 0) {
             RefImage *r = &g_refs.items[g_refs.selected];
+
+            if (hit_rotation_handle(r, canvas_x, canvas_y,
+                                    view_x, view_y, zoom, m)) {
+                g_refs.mode = REF_ROTATING;
+                g_refs.rot_start_angle = atan2f(dy - r->y, dx - r->x);
+                g_refs.rot_start_rot   = r->rotation;
+                return true;
+            }
+
             Vector2 cor[4];
             corners_screen(r, canvas_x, canvas_y, view_x, view_y, zoom, cor);
             int c = hit_corner(cor, m);
@@ -358,6 +410,13 @@ void refimage_draw_selection_overlay(int canvas_x, int canvas_y,
         DrawRectangleRec(h, WHITE);
         DrawRectangleLinesEx(h, 1.0f, (Color){0, 0, 0, 200});
     }
+
+    // Rotation handle (circle) with connector line from top edge midpoint
+    Vector2 rh = rotation_handle_screen(r, canvas_x, canvas_y, view_x, view_y, zoom);
+    Vector2 top_mid = {(cor[0].x + cor[1].x) * 0.5f, (cor[0].y + cor[1].y) * 0.5f};
+    DrawLineEx(top_mid, rh, 1.0f, (Color){0, 0, 0, 180});
+    DrawCircleV(rh, 6.0f, WHITE);
+    DrawCircleLinesV(rh, 6.0f, (Color){0, 0, 0, 200});
 }
 
 #endif // REFIMAGE_IMPLEMENTATION
