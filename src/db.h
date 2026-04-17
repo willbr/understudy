@@ -4,6 +4,8 @@
 #include "sqlite3.h"
 #include "canvas.h"   // for Stroke, Layer
 
+typedef struct RefImage RefImage;   // forward-declare (defined in refimage.h)
+
 typedef struct {
     int  id;
     char name[128];
@@ -35,3 +37,16 @@ void db_free_layers(Layer *layers, int count);
 
 bool db_delete_painting(sqlite3 *db, int id);
 bool db_rename_painting(sqlite3 *db, int id, const char *new_name);
+
+// Wipe & rewrite ref_images for this painting. Returns 0 on success.
+int  db_save_ref_images(sqlite3 *db, int painting_id,
+                        const RefImage *images, int count);
+
+// Loads all ref images for painting_id into a freshly allocated array.
+// Each entry's texture is uploaded and png_bytes is malloc'd.
+// Returns true on success (even if 0 rows). Caller owns *out.
+bool db_load_ref_images(sqlite3 *db, int painting_id,
+                        RefImage **out, int *out_count);
+
+// Free a loaded array: unloads textures, frees png bytes, frees array.
+void db_free_ref_images(RefImage *images, int count);

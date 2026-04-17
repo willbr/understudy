@@ -1,4 +1,5 @@
 #include "db.h"
+#include "refimage.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -396,4 +397,115 @@ bool db_rename_painting(sqlite3 *db, int id, const char *new_name) {
     bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
     sqlite3_finalize(stmt);
     return ok;
+}
+
+// ── Reference images ─────────────────────────────────────────────────────────
+
+int db_save_ref_images(sqlite3 *db, int painting_id,
+                       const RefImage *images, int count) {
+    sqlite3_stmt *del_stmt, *ins_stmt;
+    const char *del = "DELETE FROM ref_images WHERE painting_id = ?;";
+    const char *ins =
+        "INSERT INTO ref_images "
+        "(painting_id, image_idx, x, y, scale, rotation, opacity, above_strokes, png_blob) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);";
+
+    if (sqlite3_prepare_v2(db, del, -1, &del_stmt, NULL) != SQLITE_OK) return -1;
+    sqlite3_bind_int(del_stmt, 1, painting_id);
+    if (sqlite3_step(del_stmt) != SQLITE_DONE) {
+        sqlite3_finalize(del_stmt);
+        return -1;
+    }
+    sqlite3_finalize(del_stmt);
+
+    if (sqlite3_prepare_v2(db, ins, -1, &ins_stmt, NULL) != SQLITE_OK) return -1;
+
+    for (int i = 0; i < count; i++) {
+        const RefImage *r = &images[i];
+        sqlite3_reset(ins_stmt);
+        sqlite3_bind_int   (ins_stmt, 1, painting_id);
+        sqlite3_bind_int   (ins_stmt, 2, i);
+        sqlite3_bind_double(ins_stmt, 3, r->x);
+        sqlite3_bind_double(ins_stmt, 4, r->y);
+        sqlite3_bind_double(ins_stmt, 5, r->scale);
+        sqlite3_bind_double(ins_stmt, 6, r->rotation);
+        sqlite3_bind_double(ins_stmt, 7, r->opacity);
+        sqlite3_bind_int   (ins_stmt, 8, r->above_strokes ? 1 : 0);
+        sqlite3_bind_blob  (ins_stmt, 9, r->png_bytes, r->png_len, SQLITE_TRANSIENT);
+
+        if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
+            fprintf(stderr, "db_save_ref_images %d: %s\n", i, sqlite3_errmsg(db));
+            sqlite3_finalize(ins_stmt);
+            return -1;
+        }
+    }
+    sqlite3_finalize(ins_stmt);
+    return 0;
+}
+
+bool db_load_ref_images(sqlite3 *db, int painting_id,
+                        RefImage **out, int *out_count) {
+    *out = NULL;
+    *out_count = 0;
+
+    sqlite3_stmt *stmt;
+    const char *sel =
+        "SELECT id, x, y, scale, rotation, opacity, above_strokes, png_blob "
+        "FROM ref_images WHERE painting_id = ? ORDER BY image_idx ASC;";
+    if (sqlite3_prepare_v2(db, sel, -1, &stmt, NULL) != SQLITE_OK) return false;
+    sqlite3_bind_int(stmt, 1, painting_id);
+
+    int cap = 0, cnt = 0;
+    RefImage *arr = NULL;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        if (cnt == cap) {
+            cap = cap ? cap * 2 : 4;
+            arr = realloc(arr, cap * sizeof(RefImage));
+        }
+        RefImage *r = &arr[cnt];
+        r->db_id         = sqlite3_column_int   (stmt, 0);
+        r->x             = (float)sqlite3_column_double(stmt, 1);
+        r->y             = (float)sqlite3_column_double(stmt, 2);
+        r->scale         = (float)sqlite3_column_double(stmt, 3);
+        r->rotation      = (float)sqlite3_column_double(stmt, 4);
+        r->opacity       = (float)sqlite3_column_double(stmt, 5);
+        r->above_strokes = sqlite3_column_int   (stmt, 6) != 0;
+
+        const void *blob = sqlite3_column_blob(stmt, 7);
+        int blob_len     = sqlite3_column_bytes(stmt, 7);
+        r->png_bytes = malloc(blob_len);
+        memcpy(r->png_bytes, blob, blob_len);
+        r->png_len   = blob_len;
+
+        Image img = LoadImageFromMemory(".png", r->png_bytes, blob_len);
+        if (!img.data) {
+            img = LoadImageFromMemory(".jpg", r->png_bytes, blob_len);
+        }
+        if (!img.data) {
+            fprintf(stderr, "db_load_ref_images: failed to decode image %d\n", cnt);
+            free(r->png_bytes);
+            continue;
+        }
+        r->src_w = img.width;
+        r->src_h = img.height;
+        r->tex = LoadTextureFromImage(img);
+        UnloadImage(img);
+
+        cnt++;
+    }
+    sqlite3_finalize(stmt);
+
+    *out = arr;
+    *out_count = cnt;
+    return true;
+}
+
+void db_free_ref_images(RefImage *images, int count) {
+    if (!images) return;
+    for (int i = 0; i < count; i++) {
+        if (images[i].tex.id) UnloadTexture(images[i].tex);
+        free(images[i].png_bytes);
+    }
+    free(images);
 }
