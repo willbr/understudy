@@ -337,6 +337,19 @@ bool refimage_update(int canvas_x, int canvas_y,
         return true;
     }
 
+    if (g_refs.selected != -1 && g_refs.mode == REF_IDLE &&
+        (IsKeyPressed(KEY_DELETE) || IsKeyPressed(KEY_BACKSPACE))) {
+        RefImage *r = &g_refs.items[g_refs.selected];
+        free_item(r);
+        memmove(&g_refs.items[g_refs.selected],
+                &g_refs.items[g_refs.selected + 1],
+                (g_refs.count - g_refs.selected - 1) * sizeof(RefImage));
+        g_refs.count--;
+        g_refs.selected = -1;
+        g_refs.dirty_after_release = 1;
+        return true;
+    }
+
     // Panel input (only when something is selected, and not mid-transform)
     if (g_refs.selected >= 0 && g_refs.mode == REF_IDLE) {
         RefImage *r = &g_refs.items[g_refs.selected];
