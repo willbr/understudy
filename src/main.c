@@ -8,6 +8,8 @@
 #include "ui.h"
 #include "db.h"
 #include "font.h"
+#define REFIMAGE_IMPLEMENTATION
+#include "refimage.h"
 
 Font g_font;
 
@@ -45,6 +47,7 @@ int main(void) {
     canvas_init(&app.canvas);
     tools_init(&app.tools);
     ui_init(&app.ui);
+    refimage_init();
     app.canvas_name[0] = '\0';
     update_title(&app);
 
@@ -608,6 +611,7 @@ int main(void) {
         db_autosave(app.db, &autosave_id,
                     app.canvas.layers, app.canvas.layer_count,
                     app.canvas.width, app.canvas.height);
+    refimage_shutdown();
     ui_free(&app.ui);
     canvas_free(&app.canvas);
     UnloadFont(g_font);
