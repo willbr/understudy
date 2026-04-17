@@ -41,6 +41,18 @@ void refimage_draw(bool want_above,
                    float view_x, float view_y, float zoom,
                    int panel_w, int panel_h);
 
+// Returns true if input was consumed (selection happened, handle click, etc.).
+// Caller should skip normal canvas input when this returns true.
+bool refimage_update(int canvas_x, int canvas_y,
+                     float view_x, float view_y, float zoom,
+                     int panel_w, int panel_h);
+
+int  refimage_selected(void);         // -1 = none
+void refimage_set_selected(int idx);  // clamps; -1 to deselect
+
+void refimage_draw_selection_overlay(int canvas_x, int canvas_y,
+                                     float view_x, float view_y, float zoom);
+
 #ifdef REFIMAGE_IMPLEMENTATION
 
 #include <stdlib.h>
@@ -158,6 +170,96 @@ void refimage_draw(bool want_above,
                        r->rotation * RAD2DEG, tint);
     }
     EndScissorMode();
+}
+
+#include <math.h>
+
+int refimage_selected(void) { return g_refs.selected; }
+
+void refimage_set_selected(int idx) {
+    if (idx < -1 || idx >= g_refs.count) g_refs.selected = -1;
+    else g_refs.selected = idx;
+}
+
+// Convert screen mouse pos to document-space coord.
+static void screen_to_doc(float mx, float my,
+                          int canvas_x, int canvas_y,
+                          float view_x, float view_y, float zoom,
+                          float *out_x, float *out_y) {
+    *out_x = (mx - canvas_x - view_x) / zoom;
+    *out_y = (my - canvas_y - view_y) / zoom;
+}
+
+// Is point (doc-space) inside the rotated rect of image r?
+static bool point_in_image(const RefImage *r, float dx, float dy) {
+    float c = cosf(-r->rotation);
+    float s = sinf(-r->rotation);
+    float lx = (dx - r->x) * c - (dy - r->y) * s;
+    float ly = (dx - r->x) * s + (dy - r->y) * c;
+    float hw = r->src_w * r->scale * 0.5f;
+    float hh = r->src_h * r->scale * 0.5f;
+    return (lx >= -hw && lx <= hw && ly >= -hh && ly <= hh);
+}
+
+bool refimage_update(int canvas_x, int canvas_y,
+                     float view_x, float view_y, float zoom,
+                     int panel_w, int panel_h) {
+    (void)panel_w; (void)panel_h;
+    Vector2 m = GetMousePosition();
+    float dx, dy;
+    screen_to_doc(m.x, m.y, canvas_x, canvas_y, view_x, view_y, zoom, &dx, &dy);
+
+    // Escape: deselect
+    if (g_refs.selected != -1 && IsKeyPressed(KEY_ESCAPE)) {
+        g_refs.selected = -1;
+        return true;
+    }
+
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        // Hit-test in reverse order (topmost first)
+        int hit = -1;
+        for (int i = g_refs.count - 1; i >= 0; i--) {
+            if (point_in_image(&g_refs.items[i], dx, dy)) { hit = i; break; }
+        }
+        if (hit != -1) {
+            g_refs.selected = hit;
+            return true;
+        }
+        if (g_refs.selected != -1) {
+            g_refs.selected = -1;
+            return true;   // consume the deselect click so no stroke starts
+        }
+    }
+
+    return false;
+}
+
+void refimage_draw_selection_overlay(int canvas_x, int canvas_y,
+                                     float view_x, float view_y, float zoom) {
+    if (g_refs.selected < 0 || g_refs.selected >= g_refs.count) return;
+    RefImage *r = &g_refs.items[g_refs.selected];
+
+    float hw = r->src_w * r->scale * 0.5f;
+    float hh = r->src_h * r->scale * 0.5f;
+    float c = cosf(r->rotation);
+    float s = sinf(r->rotation);
+
+    Vector2 corners_local[4] = {
+        {-hw, -hh}, { hw, -hh}, { hw,  hh}, {-hw,  hh}
+    };
+    Vector2 corners_screen[4];
+    for (int i = 0; i < 4; i++) {
+        float lx = corners_local[i].x;
+        float ly = corners_local[i].y;
+        float wx = r->x + lx * c - ly * s;
+        float wy = r->y + lx * s + ly * c;
+        corners_screen[i].x = canvas_x + view_x + wx * zoom;
+        corners_screen[i].y = canvas_y + view_y + wy * zoom;
+    }
+
+    for (int i = 0; i < 4; i++)
+        DrawLineEx(corners_screen[i], corners_screen[(i + 1) % 4], 1.5f,
+                   (Color){0, 0, 0, 180});
 }
 
 #endif // REFIMAGE_IMPLEMENTATION

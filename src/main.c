@@ -139,6 +139,11 @@ int main(void) {
                 }
             }
 
+            bool refimage_consumed = refimage_update(
+                canvas_x, CANVAS_Y,
+                app.canvas.view_x, app.canvas.view_y, app.canvas.zoom,
+                app.canvas.rt.texture.width, app.canvas.rt.texture.height);
+
             ToolbarEvents ev = {0};
             if (!toolbar_hidden)
                 ev = toolbar_update(&app.tools, &app.canvas);
@@ -416,6 +421,11 @@ int main(void) {
                 }
                 if (app.canvas.is_drawing)
                     canvas_end_stroke(&app.canvas);
+            } else if (refimage_consumed) {
+                zoom_rect_active = false;
+                SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
+                if (app.canvas.is_drawing)
+                    canvas_end_stroke(&app.canvas);
             } else {
                 zoom_rect_active = false;
                 SetMouseCursor(MOUSE_CURSOR_DEFAULT);
@@ -507,6 +517,9 @@ int main(void) {
                           canvas_x, CANVAS_Y,
                           app.canvas.view_x, app.canvas.view_y, app.canvas.zoom,
                           app.canvas.rt.texture.width, app.canvas.rt.texture.height);
+            refimage_draw_selection_overlay(canvas_x, CANVAS_Y,
+                                            app.canvas.view_x, app.canvas.view_y,
+                                            app.canvas.zoom);
             canvas_draw_border(&app.canvas, canvas_x);
 
             // Zoom rect preview
