@@ -189,6 +189,40 @@ done:
     }
 }
 
+static void render_paper(Canvas *c) {
+    int pw = c->paper_rt.texture.width;
+    int ph = c->paper_rt.texture.height;
+
+    BeginTextureMode(c->paper_rt);
+    ClearBackground(BLANK);
+
+    float docSize[2] = {(float)c->width, (float)c->height};
+    float viewOff[2] = {c->view_x, c->view_y};
+    float res[2]     = {(float)pw, (float)ph};
+    SetShaderValue(c->paper_shader,
+                   GetShaderLocation(c->paper_shader, "docSize"),
+                   docSize, SHADER_UNIFORM_VEC2);
+    SetShaderValue(c->paper_shader,
+                   GetShaderLocation(c->paper_shader, "viewOffset"),
+                   viewOff, SHADER_UNIFORM_VEC2);
+    SetShaderValue(c->paper_shader,
+                   GetShaderLocation(c->paper_shader, "zoom"),
+                   &c->zoom, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(c->paper_shader,
+                   GetShaderLocation(c->paper_shader, "resolution"),
+                   res, SHADER_UNIFORM_VEC2);
+
+    BeginShaderMode(c->paper_shader);
+    float sx = c->view_x;
+    float sy = c->view_y;
+    float sw = (float)c->width  * c->zoom;
+    float sh = (float)c->height * c->zoom;
+    DrawRectangle((int)sx, (int)sy, (int)sw, (int)sh, WHITE);
+    EndShaderMode();
+
+    EndTextureMode();
+}
+
 // Full re-render of all visible layers at the current view transform.
 // Composite strokes_rt into rt using the ink shader
 void composite_ink(Canvas *c) {
@@ -196,7 +230,7 @@ void composite_ink(Canvas *c) {
     int ph = c->rt.texture.height;
 
     BeginTextureMode(c->rt);
-    ClearBackground((Color){45, 45, 45, 255});
+    ClearBackground(BLANK);
 
     float docSize[2] = {(float)c->width, (float)c->height};
     float viewOff[2] = {c->view_x, c->view_y};
@@ -310,11 +344,13 @@ void canvas_init(Canvas *c) {
     c->height = CANVAS_DOC_H;
 
     c->paper_tex = gen_paper_texture();
-    c->ink_shader = LoadShader(NULL, "src/ink.fs");
+    c->ink_shader   = LoadShader(NULL, "src/ink.fs");
+    c->paper_shader = LoadShader(0, "src/paper.fs");
 
     c->rt           = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
     c->strokes_rt   = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
     c->committed_rt = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
+    c->paper_rt     = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
     c->minimap_rt   = LoadRenderTexture(MINIMAP_SIZE, MINIMAP_SIZE);
 
     memset(c->layers, 0, sizeof(c->layers));
@@ -328,13 +364,16 @@ void canvas_init(Canvas *c) {
 
     reset_view(c);
     redraw_all(c);
+    render_paper(c);
     update_minimap(c);
 }
 
 void canvas_free(Canvas *c) {
     UnloadShader(c->ink_shader);
+    UnloadShader(c->paper_shader);
     UnloadTexture(c->paper_tex);
     UnloadRenderTexture(c->minimap_rt);
+    UnloadRenderTexture(c->paper_rt);
     UnloadRenderTexture(c->committed_rt);
     UnloadRenderTexture(c->strokes_rt);
     UnloadRenderTexture(c->rt);
@@ -626,16 +665,20 @@ void canvas_resize_doc(Canvas *c, int new_w, int new_h) {
 
 void canvas_redraw_for_view(Canvas *c) {
     redraw_all(c);
+    render_paper(c);
 }
 
 void canvas_resize(Canvas *c, int panel_w, int panel_h) {
     UnloadRenderTexture(c->rt);
     UnloadRenderTexture(c->strokes_rt);
     UnloadRenderTexture(c->committed_rt);
+    UnloadRenderTexture(c->paper_rt);
     c->rt           = LoadRenderTexture(panel_w, panel_h);
     c->strokes_rt   = LoadRenderTexture(panel_w, panel_h);
     c->committed_rt = LoadRenderTexture(panel_w, panel_h);
+    c->paper_rt     = LoadRenderTexture(panel_w, panel_h);
     redraw_all(c);
+    render_paper(c);
 }
 
 void canvas_draw_minimap(const Canvas *c, float alpha, int x_offset) {
@@ -670,14 +713,31 @@ void canvas_draw_minimap(const Canvas *c, float alpha, int x_offset) {
     EndScissorMode();
 }
 
-void canvas_draw(const Canvas *c, int x_offset) {
+void canvas_draw_dark_bg(const Canvas *c, int x_offset) {
     int pw = c->rt.texture.width;
     int ph = c->rt.texture.height;
+    DrawRectangle(x_offset, CANVAS_Y, pw, ph, (Color){45, 45, 45, 255});
+}
 
+void canvas_draw_paper(const Canvas *c, int x_offset) {
+    int pw = c->paper_rt.texture.width;
+    int ph = c->paper_rt.texture.height;
+    Rectangle src  = {0, 0, (float)pw, -(float)ph};
+    Rectangle dest = {(float)x_offset, CANVAS_Y, (float)pw, (float)ph};
+    DrawTexturePro(c->paper_rt.texture, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
+}
+
+void canvas_draw_strokes(const Canvas *c, int x_offset) {
+    int pw = c->rt.texture.width;
+    int ph = c->rt.texture.height;
     Rectangle src  = {0, 0, (float)pw, -(float)ph};
     Rectangle dest = {(float)x_offset, CANVAS_Y, (float)pw, (float)ph};
     DrawTexturePro(c->rt.texture, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
+}
 
+void canvas_draw_border(const Canvas *c, int x_offset) {
+    int pw = c->rt.texture.width;
+    int ph = c->rt.texture.height;
     float bx = (float)x_offset + c->view_x;
     float by = CANVAS_Y + c->view_y;
     float bw = (float)c->width  * c->zoom;

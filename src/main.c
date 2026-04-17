@@ -455,7 +455,10 @@ int main(void) {
         BeginDrawing();
             ClearBackground((Color){25, 25, 25, 255});
 
-            canvas_draw(&app.canvas, canvas_x);
+            canvas_draw_dark_bg(&app.canvas, canvas_x);
+            canvas_draw_paper(&app.canvas, canvas_x);
+            canvas_draw_strokes(&app.canvas, canvas_x);
+            canvas_draw_border(&app.canvas, canvas_x);
 
             // Zoom rect preview
             if (zoom_rect_active && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {

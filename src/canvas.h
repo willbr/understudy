@@ -40,6 +40,8 @@ typedef struct Canvas {
     RenderTexture2D committed_rt;  // cached committed strokes (avoids full re-render per frame)
     RenderTexture2D minimap_rt;    // thumbnail of full document at MINIMAP_SIZE scale
     Texture2D       paper_tex;   // fallback paper texture (used for minimap)
+    RenderTexture2D paper_rt;     // paper rendered at current view transform
+    Shader          paper_shader; // paper.fs — used for paper_rt
     Shader          ink_shader;  // composites strokes with procedural paper
     int     width, height;
 
@@ -85,7 +87,17 @@ void canvas_resize(Canvas *c, int panel_w, int panel_h);
 // Draw the minimap overlay — call inside BeginDrawing; alpha 0..1 for fade
 void canvas_draw_minimap(const Canvas *c, float alpha, int x_offset);
 
-void canvas_draw(const Canvas *c, int x_offset);
+// Background fill (dark gray) for area outside document
+void canvas_draw_dark_bg(const Canvas *c, int x_offset);
+
+// Paper layer (below strokes, above dark bg)
+void canvas_draw_paper(const Canvas *c, int x_offset);
+
+// Strokes layer (transparent where no ink)
+void canvas_draw_strokes(const Canvas *c, int x_offset);
+
+// Document border (drawn on top of everything canvas-related)
+void canvas_draw_border(const Canvas *c, int x_offset);
 
 // Low-level rendering (used by line tool preview)
 void render_stroke_transformed(const Stroke *s, float vx, float vy, float zoom);
