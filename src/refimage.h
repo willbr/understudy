@@ -332,6 +332,20 @@ bool refimage_update(int canvas_x, int canvas_y,
     float dx, dy;
     screen_to_doc(m.x, m.y, canvas_x, canvas_y, view_x, view_y, zoom, &dx, &dy);
 
+    // Cursor hint when hovering handles / body of selection (idle only)
+    if (g_refs.selected >= 0 && g_refs.mode == REF_IDLE) {
+        RefImage *r = &g_refs.items[g_refs.selected];
+        Vector2 cor[4];
+        corners_screen(r, canvas_x, canvas_y, view_x, view_y, zoom, cor);
+        if (hit_rotation_handle(r, canvas_x, canvas_y, view_x, view_y, zoom, m)) {
+            SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
+        } else if (hit_corner(cor, m) >= 0) {
+            SetMouseCursor(MOUSE_CURSOR_RESIZE_ALL);
+        } else if (point_in_image(r, dx, dy)) {
+            SetMouseCursor(MOUSE_CURSOR_RESIZE_ALL);
+        }
+    }
+
     if (g_refs.selected != -1 && IsKeyPressed(KEY_ESCAPE) && g_refs.mode == REF_IDLE) {
         g_refs.selected = -1;
         return true;
