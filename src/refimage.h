@@ -34,6 +34,13 @@ int  refimage_count(void);
 RefImage *refimage_get(int i);                // mutable; used by db save
 void refimage_set_defaults(float doc_w, float doc_h);
 
+// Draw all images with above_strokes == want_above.
+// All args describe the canvas viewport so images align with doc coords.
+void refimage_draw(bool want_above,
+                   int canvas_x, int canvas_y,
+                   float view_x, float view_y, float zoom,
+                   int panel_w, int panel_h);
+
 #ifdef REFIMAGE_IMPLEMENTATION
 
 #include <stdlib.h>
@@ -127,6 +134,30 @@ void refimage_set_defaults(float doc_w, float doc_h) {
     float fit_h = (doc_h * 0.6f) / (float)r->src_h;
     float fit = fit_w < fit_h ? fit_w : fit_h;
     r->scale = (fit < 1.0f) ? fit : 1.0f;
+}
+
+void refimage_draw(bool want_above,
+                   int canvas_x, int canvas_y,
+                   float view_x, float view_y, float zoom,
+                   int panel_w, int panel_h) {
+    BeginScissorMode(canvas_x, canvas_y, panel_w, panel_h);
+    for (int i = 0; i < g_refs.count; i++) {
+        RefImage *r = &g_refs.items[i];
+        if (r->above_strokes != want_above) continue;
+
+        float sx = canvas_x + view_x + r->x * zoom;
+        float sy = canvas_y + view_y + r->y * zoom;
+        float sw = (float)r->src_w * r->scale * zoom;
+        float sh = (float)r->src_h * r->scale * zoom;
+
+        Rectangle src  = {0, 0, (float)r->src_w, (float)r->src_h};
+        Rectangle dest = {sx, sy, sw, sh};
+        Vector2 origin = {sw * 0.5f, sh * 0.5f};
+        Color tint = {255, 255, 255, (unsigned char)(r->opacity * 255.0f)};
+        DrawTexturePro(r->tex, src, dest, origin,
+                       r->rotation * RAD2DEG, tint);
+    }
+    EndScissorMode();
 }
 
 #endif // REFIMAGE_IMPLEMENTATION

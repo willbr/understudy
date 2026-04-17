@@ -498,7 +498,15 @@ int main(void) {
 
             canvas_draw_dark_bg(&app.canvas, canvas_x);
             canvas_draw_paper(&app.canvas, canvas_x);
+            refimage_draw(false,                                           // below
+                          canvas_x, CANVAS_Y,
+                          app.canvas.view_x, app.canvas.view_y, app.canvas.zoom,
+                          app.canvas.rt.texture.width, app.canvas.rt.texture.height);
             canvas_draw_strokes(&app.canvas, canvas_x);
+            refimage_draw(true,                                            // above
+                          canvas_x, CANVAS_Y,
+                          app.canvas.view_x, app.canvas.view_y, app.canvas.zoom,
+                          app.canvas.rt.texture.width, app.canvas.rt.texture.height);
             canvas_draw_border(&app.canvas, canvas_x);
 
             // Zoom rect preview
