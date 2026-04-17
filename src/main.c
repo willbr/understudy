@@ -526,6 +526,11 @@ int main(void) {
             refimage_draw_selection_overlay(canvas_x, CANVAS_Y,
                                             app.canvas.view_x, app.canvas.view_y,
                                             app.canvas.zoom);
+            refimage_draw_panel(canvas_x, CANVAS_Y,
+                                app.canvas.view_x, app.canvas.view_y,
+                                app.canvas.zoom,
+                                app.canvas.rt.texture.width,
+                                app.canvas.rt.texture.height);
             canvas_draw_border(&app.canvas, canvas_x);
 
             // Zoom rect preview

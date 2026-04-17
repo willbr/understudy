@@ -56,6 +56,10 @@ int  refimage_consume_dirty(void);
 void refimage_draw_selection_overlay(int canvas_x, int canvas_y,
                                      float view_x, float view_y, float zoom);
 
+void refimage_draw_panel(int canvas_x, int canvas_y,
+                        float view_x, float view_y, float zoom,
+                        int panel_w, int panel_h);
+
 #ifdef REFIMAGE_IMPLEMENTATION
 
 #include <stdlib.h>
@@ -74,6 +78,7 @@ typedef struct {
     float scale_start_scale;     // r->scale at grab time
     float rot_start_angle;       // mouse angle at grab time
     float rot_start_rot;         // r->rotation at grab time
+    bool slider_dragging;        // mouse held on opacity slider
 } RefImageList;
 
 static RefImageList g_refs;
@@ -92,6 +97,7 @@ void refimage_init(void) {
     g_refs.scale_start_scale = 0;
     g_refs.rot_start_angle = 0;
     g_refs.rot_start_rot = 0;
+    g_refs.slider_dragging = false;
 }
 
 static void free_item(RefImage *r) {
@@ -280,10 +286,48 @@ static bool hit_rotation_handle(const RefImage *r,
     return dx * dx + dy * dy <= 12.0f * 12.0f;
 }
 
+#define PANEL_W 220.0f
+#define PANEL_H 80.0f
+
+// AABB of the selected image in screen space; fills min/max corners.
+static void selection_aabb(const RefImage *r,
+                           int canvas_x, int canvas_y,
+                           float view_x, float view_y, float zoom,
+                           float *min_x, float *min_y,
+                           float *max_x, float *max_y) {
+    Vector2 cor[4];
+    corners_screen(r, canvas_x, canvas_y, view_x, view_y, zoom, cor);
+    *min_x = cor[0].x; *min_y = cor[0].y;
+    *max_x = cor[0].x; *max_y = cor[0].y;
+    for (int i = 1; i < 4; i++) {
+        if (cor[i].x < *min_x) *min_x = cor[i].x;
+        if (cor[i].y < *min_y) *min_y = cor[i].y;
+        if (cor[i].x > *max_x) *max_x = cor[i].x;
+        if (cor[i].y > *max_y) *max_y = cor[i].y;
+    }
+}
+
+static Rectangle panel_rect(const RefImage *r,
+                            int canvas_x, int canvas_y,
+                            float view_x, float view_y, float zoom,
+                            int panel_w, int panel_h) {
+    float mnx, mny, mxx, mxy;
+    selection_aabb(r, canvas_x, canvas_y, view_x, view_y, zoom,
+                   &mnx, &mny, &mxx, &mxy);
+    float px = (mnx + mxx) * 0.5f - PANEL_W * 0.5f;
+    float py = mxy + 12.0f;
+    if (py + PANEL_H > canvas_y + panel_h) {
+        py = mny - 12.0f - PANEL_H;
+    }
+    if (px < canvas_x + 4) px = canvas_x + 4;
+    if (px + PANEL_W > canvas_x + panel_w - 4) px = canvas_x + panel_w - PANEL_W - 4;
+    if (py < canvas_y + 4) py = canvas_y + 4;
+    return (Rectangle){px, py, PANEL_W, PANEL_H};
+}
+
 bool refimage_update(int canvas_x, int canvas_y,
                      float view_x, float view_y, float zoom,
                      int panel_w, int panel_h) {
-    (void)panel_w; (void)panel_h;
     Vector2 m = GetMousePosition();
     float dx, dy;
     screen_to_doc(m.x, m.y, canvas_x, canvas_y, view_x, view_y, zoom, &dx, &dy);
@@ -291,6 +335,66 @@ bool refimage_update(int canvas_x, int canvas_y,
     if (g_refs.selected != -1 && IsKeyPressed(KEY_ESCAPE) && g_refs.mode == REF_IDLE) {
         g_refs.selected = -1;
         return true;
+    }
+
+    // Panel input (only when something is selected, and not mid-transform)
+    if (g_refs.selected >= 0 && g_refs.mode == REF_IDLE) {
+        RefImage *r = &g_refs.items[g_refs.selected];
+        Rectangle pr = panel_rect(r, canvas_x, canvas_y, view_x, view_y, zoom,
+                                  panel_w, panel_h);
+
+        Rectangle slider = {pr.x + 12, pr.y + 16, pr.width - 24, 10};
+        Rectangle toggle_above = {pr.x + 12, pr.y + 36, (pr.width - 36) * 0.5f, 20};
+        Rectangle toggle_below = {toggle_above.x + toggle_above.width + 4,
+                                  pr.y + 36, toggle_above.width, 20};
+        Rectangle del_btn = {pr.x + pr.width - 30, pr.y + pr.height - 26, 22, 20};
+
+        // Continue dragging slider (mode stays REF_IDLE; slider_dragging flag)
+        if (g_refs.slider_dragging) {
+            float t = (m.x - slider.x) / slider.width;
+            if (t < 0) t = 0;
+            if (t > 1) t = 1;
+            r->opacity = t;
+            if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                g_refs.slider_dragging = false;
+                g_refs.dirty_after_release = 1;
+            }
+            return true;
+        }
+
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+            CheckCollisionPointRec(m, pr)) {
+            if (CheckCollisionPointRec(m, slider)) {
+                g_refs.slider_dragging = true;
+                float t = (m.x - slider.x) / slider.width;
+                if (t < 0) t = 0;
+                if (t > 1) t = 1;
+                r->opacity = t;
+                return true;
+            }
+            if (CheckCollisionPointRec(m, toggle_above)) {
+                r->above_strokes = true;
+                g_refs.dirty_after_release = 1;
+                return true;
+            }
+            if (CheckCollisionPointRec(m, toggle_below)) {
+                r->above_strokes = false;
+                g_refs.dirty_after_release = 1;
+                return true;
+            }
+            if (CheckCollisionPointRec(m, del_btn)) {
+                free_item(r);
+                memmove(&g_refs.items[g_refs.selected],
+                        &g_refs.items[g_refs.selected + 1],
+                        (g_refs.count - g_refs.selected - 1) * sizeof(RefImage));
+                g_refs.count--;
+                g_refs.selected = -1;
+                g_refs.dirty_after_release = 1;
+                return true;
+            }
+            // Click inside panel but not on a control: still consume
+            return true;
+        }
     }
 
     // Active drag (move)
@@ -334,7 +438,6 @@ bool refimage_update(int canvas_x, int canvas_y,
         return true;
     }
 
-    // Mouse press: check handles on selected (rotation first, then corners), then body
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         if (g_refs.selected >= 0) {
             RefImage *r = &g_refs.items[g_refs.selected];
@@ -417,6 +520,41 @@ void refimage_draw_selection_overlay(int canvas_x, int canvas_y,
     DrawLineEx(top_mid, rh, 1.0f, (Color){0, 0, 0, 180});
     DrawCircleV(rh, 6.0f, WHITE);
     DrawCircleLinesV(rh, 6.0f, (Color){0, 0, 0, 200});
+}
+
+void refimage_draw_panel(int canvas_x, int canvas_y,
+                        float view_x, float view_y, float zoom,
+                        int panel_w, int panel_h) {
+    if (g_refs.selected < 0 || g_refs.selected >= g_refs.count) return;
+    RefImage *r = &g_refs.items[g_refs.selected];
+    Rectangle pr = panel_rect(r, canvas_x, canvas_y, view_x, view_y, zoom,
+                              panel_w, panel_h);
+
+    DrawRectangleRec(pr, (Color){30, 30, 30, 230});
+    DrawRectangleLinesEx(pr, 1.0f, (Color){80, 80, 80, 255});
+
+    // Opacity slider
+    Rectangle slider = {pr.x + 12, pr.y + 16, pr.width - 24, 10};
+    DrawRectangleRec(slider, (Color){50, 50, 50, 255});
+    Rectangle fill = slider;
+    fill.width *= r->opacity;
+    DrawRectangleRec(fill, (Color){180, 180, 200, 255});
+    DrawRectangleLinesEx(slider, 1.0f, (Color){90, 90, 90, 255});
+
+    // Toggle pill
+    Rectangle ta = {pr.x + 12, pr.y + 36, (pr.width - 36) * 0.5f, 20};
+    Rectangle tb = {ta.x + ta.width + 4, pr.y + 36, ta.width, 20};
+    Color on = {90, 110, 150, 255};
+    Color off = {50, 50, 50, 255};
+    DrawRectangleRec(ta, r->above_strokes ? on : off);
+    DrawRectangleRec(tb, r->above_strokes ? off : on);
+    DrawRectangleLinesEx(ta, 1.0f, (Color){80, 80, 80, 255});
+    DrawRectangleLinesEx(tb, 1.0f, (Color){80, 80, 80, 255});
+
+    // Delete button
+    Rectangle del = {pr.x + pr.width - 30, pr.y + pr.height - 26, 22, 20};
+    DrawRectangleRec(del, (Color){120, 40, 40, 255});
+    DrawRectangleLinesEx(del, 1.0f, (Color){200, 80, 80, 255});
 }
 
 #endif // REFIMAGE_IMPLEMENTATION
