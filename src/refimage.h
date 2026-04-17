@@ -50,6 +50,9 @@ bool refimage_update(int canvas_x, int canvas_y,
 int  refimage_selected(void);         // -1 = none
 void refimage_set_selected(int idx);  // clamps; -1 to deselect
 
+// Returns 1 and clears the flag if the user just released a manipulation.
+int  refimage_consume_dirty(void);
+
 void refimage_draw_selection_overlay(int canvas_x, int canvas_y,
                                      float view_x, float view_y, float zoom);
 
@@ -63,6 +66,9 @@ typedef struct {
     int count;
     int capacity;
     int selected;        // -1 = none
+    enum { REF_IDLE, REF_MOVING, REF_SCALING, REF_ROTATING } mode;
+    float grab_dx, grab_dy;        // mouse offset from image center at grab time (doc coords)
+    int   dirty_after_release;     // 1 = trigger autosave on mouse release
 } RefImageList;
 
 static RefImageList g_refs;
@@ -72,6 +78,10 @@ void refimage_init(void) {
     g_refs.count = 0;
     g_refs.capacity = 0;
     g_refs.selected = -1;
+    g_refs.mode = REF_IDLE;
+    g_refs.grab_dx = 0;
+    g_refs.grab_dy = 0;
+    g_refs.dirty_after_release = 0;
 }
 
 static void free_item(RefImage *r) {
@@ -209,29 +219,53 @@ bool refimage_update(int canvas_x, int canvas_y,
     float dx, dy;
     screen_to_doc(m.x, m.y, canvas_x, canvas_y, view_x, view_y, zoom, &dx, &dy);
 
-    // Escape: deselect
-    if (g_refs.selected != -1 && IsKeyPressed(KEY_ESCAPE)) {
+    // Escape deselects (only when idle)
+    if (g_refs.selected != -1 && IsKeyPressed(KEY_ESCAPE) && g_refs.mode == REF_IDLE) {
         g_refs.selected = -1;
         return true;
     }
 
+    // Active drag (move)
+    if (g_refs.mode == REF_MOVING && g_refs.selected >= 0) {
+        RefImage *r = &g_refs.items[g_refs.selected];
+        r->x = dx - g_refs.grab_dx;
+        r->y = dy - g_refs.grab_dy;
+        if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+            g_refs.mode = REF_IDLE;
+            g_refs.dirty_after_release = 1;
+        }
+        return true;
+    }
+
+    // Mouse press: hit-test and start drag or deselect
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-        // Hit-test in reverse order (topmost first)
         int hit = -1;
         for (int i = g_refs.count - 1; i >= 0; i--) {
             if (point_in_image(&g_refs.items[i], dx, dy)) { hit = i; break; }
         }
         if (hit != -1) {
             g_refs.selected = hit;
+            g_refs.mode = REF_MOVING;
+            RefImage *r = &g_refs.items[hit];
+            g_refs.grab_dx = dx - r->x;
+            g_refs.grab_dy = dy - r->y;
             return true;
         }
         if (g_refs.selected != -1) {
             g_refs.selected = -1;
-            return true;   // consume the deselect click so no stroke starts
+            return true;
         }
     }
 
     return false;
+}
+
+int refimage_consume_dirty(void) {
+    if (g_refs.dirty_after_release) {
+        g_refs.dirty_after_release = 0;
+        return 1;
+    }
+    return 0;
 }
 
 void refimage_draw_selection_overlay(int canvas_x, int canvas_y,

@@ -99,6 +99,12 @@ int main(void) {
             prev_drawing = app.canvas.is_drawing;
         }
 
+        if (refimage_consume_dirty() && app.db) {
+            app.canvas.dirty = true;
+            db_autosave(app.db, &autosave_id,
+                        app.canvas.layers, app.canvas.layer_count,
+                        app.canvas.width, app.canvas.height);
+        }
 
         if (app.ui.mode == UI_NONE) {
             if (IsFileDropped()) {
