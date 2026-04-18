@@ -120,6 +120,24 @@ int main(void) {
         }
 
         if (app.ui.mode == UI_NONE) {
+            // Compute mouse position in document space; fall back to canvas
+            // center when the cursor isn't over the canvas panel.
+            float ref_cx, ref_cy;
+            {
+                Vector2 mp = GetMousePosition();
+                int panel_w = app.canvas.rt.texture.width;
+                int panel_h = app.canvas.rt.texture.height;
+                bool in_panel = mp.x >= canvas_x && mp.x < canvas_x + panel_w &&
+                                mp.y >= CANVAS_Y && mp.y < CANVAS_Y + panel_h;
+                if (in_panel) {
+                    ref_cx = (mp.x - canvas_x - app.canvas.view_x) / app.canvas.zoom;
+                    ref_cy = (mp.y - CANVAS_Y - app.canvas.view_y) / app.canvas.zoom;
+                } else {
+                    ref_cx = app.canvas.width  * 0.5f;
+                    ref_cy = app.canvas.height * 0.5f;
+                }
+            }
+
             if (IsFileDropped()) {
                 FilePathList list = LoadDroppedFiles();
                 for (unsigned i = 0; i < list.count; i++) {
@@ -129,7 +147,8 @@ int main(void) {
                     if (bytes && img.data && len > 0) {
                         refimage_add(bytes, len, img);
                         refimage_set_defaults((float)app.canvas.width,
-                                              (float)app.canvas.height);
+                                              (float)app.canvas.height,
+                                              ref_cx, ref_cy);
                         refimage_set_last_z(app.canvas.next_z);
                         app.canvas.next_z += 1.0f;
                         const char *fname = GetFileName(list.paths[i]);
@@ -153,7 +172,8 @@ int main(void) {
                         if (img.data) {
                             refimage_add(png, len, img);
                             refimage_set_defaults((float)app.canvas.width,
-                                                  (float)app.canvas.height);
+                                                  (float)app.canvas.height,
+                                                  ref_cx, ref_cy);
                             refimage_set_last_z(app.canvas.next_z);
                             app.canvas.next_z += 1.0f;
                             char pname[32];

@@ -36,7 +36,7 @@ void refimage_load_from_db(RefImage *arr, int n);
 int  refimage_count(void);
 RefImage *refimage_get(int i);                // mutable; used by db save
 
-void refimage_set_defaults(float doc_w, float doc_h);
+void refimage_set_defaults(float doc_w, float doc_h, float cx, float cy);
 
 // Set the newly-added (last) image's name. Truncated to 63 chars.
 void refimage_set_last_name(const char *name);
@@ -212,12 +212,13 @@ void refimage_load_from_db(RefImage *arr, int n) {
     free(arr);  // the array itself, not the items
 }
 
-// Set the newly-added (last) image's defaults given canvas doc dims.
-void refimage_set_defaults(float doc_w, float doc_h) {
+// Set the newly-added (last) image's defaults given canvas doc dims and a
+// document-space center point (cx, cy). Scale fits to ~60% of the canvas.
+void refimage_set_defaults(float doc_w, float doc_h, float cx, float cy) {
     if (g_refs.count == 0) return;
     RefImage *r = &g_refs.items[g_refs.count - 1];
-    r->x = doc_w * 0.5f;
-    r->y = doc_h * 0.5f;
+    r->x = cx;
+    r->y = cy;
     float fit_w = (doc_w * 0.6f) / (float)r->src_w;
     float fit_h = (doc_h * 0.6f) / (float)r->src_h;
     float fit = fit_w < fit_h ? fit_w : fit_h;
