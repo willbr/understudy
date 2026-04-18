@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Run
 
 ```bash
-make          # build → ./claude-paint
+make          # build → ./understudy
 make run      # build + launch
 make clean    # remove objects and binary
 ```
@@ -61,7 +61,7 @@ Cmd/Ctrl+Z           → canvas_undo()        ← pops last stroke, replays all 
 ### Canvas storage (SQLite)
 
 Two tables. Each stroke is one row; points packed as a raw `Vector2` (float[2]) BLOB.  
-DB: `~/Library/Application Support/claude-paint/paintings.db`
+DB: `~/Library/Application Support/Understudy/paintings.db`
 
 ```sql
 paintings(id, name, created_at, updated_at, width, height)

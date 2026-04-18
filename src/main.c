@@ -28,9 +28,9 @@ typedef struct {
 static void update_title(AppState *app) {
     char title[160];
     if (app->canvas_name[0])
-        snprintf(title, sizeof(title), "%s — Claude Paint", app->canvas_name);
+        snprintf(title, sizeof(title), "%s — Understudy", app->canvas_name);
     else
-        snprintf(title, sizeof(title), "Untitled — Claude Paint");
+        snprintf(title, sizeof(title), "Untitled — Understudy");
     SetWindowTitle(title);
 }
 
@@ -38,7 +38,7 @@ int main(void) {
     AppState app = {0};
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
-    InitWindow(1280, 800, "Claude Paint");
+    InitWindow(1280, 800, "Understudy");
     MaximizeWindow();
     SetTargetFPS(TARGET_FPS);
     SetExitKey(KEY_NULL); // Escape is used by modals

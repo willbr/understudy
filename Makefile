@@ -1,5 +1,5 @@
 CC      = clang
-TARGET  = claude-paint
+TARGET  = understudy
 SRCDIR  = src
 SRCS    = $(wildcard $(SRCDIR)/*.c)
 MSRCS   = $(wildcard $(SRCDIR)/*.m)

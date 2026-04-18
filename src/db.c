@@ -104,7 +104,7 @@ bool db_open(sqlite3 **db) {
     if (!home) return false;
 
     char dir[512];
-    snprintf(dir, sizeof(dir), "%s/Library/Application Support/claude-paint", home);
+    snprintf(dir, sizeof(dir), "%s/Library/Application Support/Understudy", home);
     mkdir(dir, 0755);
 
     char path[600];

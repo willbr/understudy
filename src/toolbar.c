@@ -173,7 +173,7 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
     rlTranslatef(0, -(float)tb_scroll, 0);
 
     // Title
-    DrawUI("Claude Paint", TB_PAD, Y_TITLE, 16, RAYWHITE);
+    DrawUI("Understudy", TB_PAD, Y_TITLE, 16, RAYWHITE);
 
     // Tool buttons (4 across at 45px each)
     Rectangle r_brush  = {TB_PAD,            Y_TOOLS, 45, 30};
