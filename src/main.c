@@ -522,47 +522,26 @@ int main(void) {
                             canvas_update_minimap(&app.canvas);
                         }
                     } else if (app.tools.active_tool == TOOL_LINE) {
-                        // Line tool: click to set start, drag to preview, release to commit
+                        // Line tool: click to set start, drag to preview, release to commit.
+                        // Preview renders via c->current on the active layer (z-correct).
                         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                             line_start = cpos;
                             line_dragging = true;
-                        }
-                        if (line_dragging && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-                            // Live preview: render a temporary 2-point line stroke
-                            Stroke preview = {0};
-                            preview.color = tools_get_draw_color(&app.tools);
-                            preview.radius = app.tools.brush_radius;
-                            preview.tool = TOOL_LINE;
-                            Vector2 pts[2] = {line_start, cpos};
-                            preview.points = pts;
-                            preview.count = 2;
-
-                            BeginTextureMode(app.canvas.strokes_rt);
-                            ClearBackground(BLANK);
-                            for (int li = 0; li < app.canvas.layer_count; li++) {
-                                if (!app.canvas.layers[li].visible) continue;
-                                Layer *l = &app.canvas.layers[li];
-                                float lpvx = app.canvas.view_x + l->pan_x * app.canvas.zoom;
-                                float lpvy = app.canvas.view_y + l->pan_y * app.canvas.zoom;
-                                for (int si = 0; si < l->stroke_count; si++)
-                                    render_stroke_transformed(&l->strokes[si],
-                                        lpvx, lpvy, app.canvas.zoom);
-                            }
-                            render_stroke_transformed(&preview,
-                                app.canvas.view_x, app.canvas.view_y, app.canvas.zoom);
-                            EndTextureMode();
-                            composite_ink(&app.canvas);
-
-                            preview.points = NULL; // don't free stack array
-                        }
-                        if (line_dragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
-                            // Commit a 2-point stroke
                             Color color = tools_get_draw_color(&app.tools);
                             canvas_begin_stroke(&app.canvas, color,
                                                 app.tools.brush_radius,
                                                 TOOL_LINE);
                             canvas_add_point(&app.canvas, line_start);
                             canvas_add_point(&app.canvas, cpos);
+                        }
+                        if (line_dragging && IsMouseButtonDown(MOUSE_BUTTON_LEFT) &&
+                            app.canvas.is_drawing && app.canvas.current.count >= 2) {
+                            // Update the second point to the current cursor (layer-local).
+                            Layer *al = &app.canvas.layers[app.canvas.active_layer];
+                            app.canvas.current.points[1].x = cpos.x - al->pan_x;
+                            app.canvas.current.points[1].y = cpos.y - al->pan_y;
+                        }
+                        if (line_dragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
                             canvas_end_stroke(&app.canvas);
                             line_dragging = false;
                         }
