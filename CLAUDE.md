@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) working in this repo.
 
 ## Build & Run
 
@@ -15,67 +15,92 @@ Single-file rebuild (faster iteration):
 clang -std=c11 -Wall -Wextra -g $(pkg-config --cflags raylib sqlite3) -c src/canvas.c -o src/canvas.o
 ```
 
-## Architecture
-
-1280×800 window split into a 220px toolbar (left) and 1060×800 canvas (right). No HiDPI — mouse coords are always logical pixels.
-
-### Modules
-
-| File | Owns |
-|------|------|
-| `main.c` | `AppState`, game loop, input routing |
-| `canvas.c/.h` | `Image` (CPU) + `Texture2D` (GPU), stroke drawing, PNG blob I/O |
-| `tools.c/.h` | `ToolState` — active tool, color, brush radius (pure data, no rendering) |
-| `toolbar.c/.h` | Left panel draw + hit-test; writes into `ToolState`, sets `UIState.mode` |
-| `db.c/.h` | All SQLite: open/close, save/load/list paintings as PNG BLOBs |
-| `ui.c/.h` | Save-name dialog and load-list modal overlays |
-
-### Data flow
-
-```
-main loop
-  if ui.mode != UI_NONE → ui_update() consumes all input
-  else:
-    toolbar_update()  writes tools.*  and sets ui.mode
-    canvas_update()   reads  tools.*  draws on canvas
-  ---
-  canvas_draw()
-  toolbar_draw()
-  ui_draw()          (on top if active)
-```
-
-### Canvas — vector strokes
-
-The canvas is **vector**: strokes are recorded as arrays of `Vector2` sample points and replayed at render time. The `RenderTexture2D` is an accumulated render cache, updated incrementally as the user draws.
-
-Stroke lifecycle in `main.c`:
-```
-IsMouseButtonPressed → canvas_begin_stroke()
-IsMouseButtonDown    → canvas_add_point()   ← renders segment to RT via BeginTextureMode
-IsMouseButtonReleased→ canvas_end_stroke()  ← commits stroke to strokes[]
-Cmd/Ctrl+Z           → canvas_undo()        ← pops last stroke, replays all remaining
-```
-
-`canvas_add_point` renders one stroke segment incrementally. `canvas_undo` replays all strokes from scratch via `redraw_all()`. `BeginTextureMode` / `EndTextureMode` is called from the update phase, before `BeginDrawing`.
-
-### Canvas storage (SQLite)
-
-Two tables. Each stroke is one row; points packed as a raw `Vector2` (float[2]) BLOB.  
-DB: `~/Library/Application Support/Understudy/paintings.db`
-
-```sql
-paintings(id, name, created_at, updated_at, width, height)
-strokes(id, painting_id→paintings.id CASCADE, stroke_idx, color_r/g/b/a, radius, tool, points BLOB)
-```
-
-Key rules:
-- `PRAGMA foreign_keys = ON` enables cascade delete (removing a painting removes its strokes).
-- Always `sqlite3_bind_blob(..., SQLITE_TRANSIENT)` — SQLite copies before the buffer is freed.
-- `db_free_strokes(strokes, count)` frees the loaded stroke array returned by `db_load_painting`.
-- `canvas_load_strokes` takes ownership of the `Stroke *` array from `db_load_painting`.
-
 ## Dependencies
 
 - raylib 5.5 (`brew install raylib`)
 - sqlite3 (`brew install sqlite`)
 - macOS frameworks in Makefile: `IOKit Cocoa OpenGL CoreVideo`
+
+macOS-only: `clipboard_mac.m` reads PNG images from the system pasteboard via AppKit.
+
+## Window & coordinates
+
+Resizable window, starts 1280×800 and maximizes. Left toolbar is 220 px (`CANVAS_X`), canvas panel fills the remainder. `Tab` hides the toolbar. No HiDPI scaling — mouse coords are logical pixels.
+
+The document is fixed at 4096×4096 (`CANVAS_DOC_W/H`); users pan and zoom within it. Screen ↔ document conversion uses `view_x/y` and `zoom` on `Canvas`.
+
+## Modules
+
+| File | Owns |
+|------|------|
+| `main.c` | `AppState`, game loop, all keyboard routing |
+| `canvas.c/.h` | `Canvas`, `Layer`, `Stroke`; render targets; shader compositing |
+| `refimage.h` | Single-header ref-image system (images dropped/pasted onto the canvas) |
+| `tools.c/.h` | `ToolState` — active tool, color, brush radius (pure data) |
+| `toolbar.c/.h` | Left-panel draw + hit-test; emits `ToolbarEvents` |
+| `db.c/.h` | SQLite: paintings, layers, strokes, ref images, autosave |
+| `ui.c/.h` | Modal overlays (save, load, export, crop, resize, help, layer settings) |
+| `clipboard_mac.m` | `clipboard_image_png()` — NSPasteboard → PNG bytes |
+| `font.h` | `DrawUI` / `MeasureUI` wrappers around the global `g_font` |
+| `paper.fs`, `ink.fs` | GLSL fragment shaders for paper texture and ink compositing |
+
+## Data flow
+
+```
+main loop
+  if ui.mode != UI_NONE → ui_update() consumes all input
+  else:
+    refimage_update()  — click/drag/rename ref images
+    toolbar_update()   — emits events; writes tools.*
+    key routing        — modes (space/D/G/Z/E/F/Shift) and actions (N/H/L, 1–5, Cmd-Z, Cmd-V)
+    canvas stroke I/O  — begin/add/end for brush, eraser, line, pan-layer
+  draw:
+    dark bg → paper → z-sorted layers+refs → overlays (selection, minimap, picker, brush cursor)
+    toolbar → modals on top
+```
+
+## Canvas — vector strokes, layered
+
+Strokes are arrays of `Vector2` sample points plus color, radius, tool. Each `Layer` owns its own stroke array and a per-layer `pan_x/pan_y`, `opacity`, `visible`, and `z` (unified z-order shared with ref images).
+
+Render targets live on the `Canvas`:
+- `committed_rt` — cached composite of all finished layers at the current view transform
+- `strokes_rt` — in-progress stroke for the active layer, fed to `ink.fs`
+- `paper_rt` — paper texture at the current view (from `paper.fs`)
+- `minimap_rt` — thumbnail of the whole document
+- `rt` — final panel-sized output
+
+Stroke lifecycle:
+```
+IsMouseButtonPressed  → canvas_begin_stroke()
+IsMouseButtonDown     → canvas_add_point()    — renders a segment incrementally
+IsMouseButtonReleased → canvas_end_stroke()   — commits to active layer
+Cmd/Ctrl+Z            → canvas_undo()         — pops last stroke, replays
+```
+
+After any view change (pan/zoom/resize), call `canvas_redraw_for_view()` so the cached RTs reflect the new transform.
+
+## Ref images
+
+`refimage.h` is `#define REFIMAGE_IMPLEMENTATION`'d once in `main.c`. It owns its own array of `RefImage`s with position, rotation, scale, z, lock, name. Dropped files and clipboard-pasted PNGs both go through `refimage_add()`. Ref images and stroke layers share the same `z` axis and are merged and z-sorted at draw time in `main.c`.
+
+## Storage (SQLite)
+
+DB: `~/Library/Application Support/Understudy/paintings.db`
+
+Tables:
+- `paintings(id, name, created_at, updated_at, width, height, is_autosave)`
+- `layers(id, painting_id→paintings CASCADE, layer_idx, name, visible, z, pan_x, pan_y, opacity)`
+- `strokes(id, layer_id→layers CASCADE, stroke_idx, color_r/g/b/a, radius, tool, points BLOB)`
+- `ref_images(id, painting_id→paintings CASCADE, z, x, y, scale, rotation, locked, name, png BLOB)`
+
+Rules:
+- `PRAGMA foreign_keys = ON` for cascade delete.
+- Always `sqlite3_bind_blob(..., SQLITE_TRANSIENT)` — SQLite copies before the buffer is freed.
+- Points packed as raw `Vector2` (float[2]) BLOBs.
+- Autosave: `db_autosave()` overwrites the same row every stroke-end; its id is tracked in `main.c` as `autosave_id` (0 until first save).
+- `db_free_layers` / `db_free_ref_images` free the arrays returned by the loaders.
+
+## Keyboard (reference)
+
+Held-key modes and one-shots live in `main.c`. The `/` overlay (`UI_HELP`) is the source of truth for users — if you add or change a binding, update `ui.c`'s help panel too.
