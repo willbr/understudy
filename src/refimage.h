@@ -65,6 +65,12 @@ void refimage_toggle_locked(int idx);
 void refimage_toggle_visible(int idx);
 void refimage_select(int idx);                            // no-op if out of range; -1 to deselect
 
+// Move the image at idx one slot up / down in the combined list.
+// Crossing the strokes boundary flips above_strokes.
+// No-ops if already at the top/bottom.
+void refimage_move_up(int idx);
+void refimage_move_down(int idx);
+
 // Inline rename state (managed by whoever draws the refs panel).
 // Returns true iff an image is currently being renamed via inline UI.
 bool refimage_rename_active(void);
@@ -700,6 +706,130 @@ void  refimage_rename_buffer_set_len(int len) {
     if ((size_t)len >= sizeof(g_refs.rename_buf)) len = (int)sizeof(g_refs.rename_buf) - 1;
     g_refs.rename_buf_len = len;
     g_refs.rename_buf[len] = '\0';
+}
+
+// ── refimage_move_up / refimage_move_down helpers ────────────────────────────
+
+// Find the highest array index of refs with above_strokes == want_above.
+// Returns -1 if none.
+static int find_highest_idx_in_group(bool want_above) {
+    int found = -1;
+    for (int i = 0; i < g_refs.count; i++) {
+        if (g_refs.items[i].above_strokes == want_above) found = i;
+    }
+    return found;
+}
+
+// Find the lowest array index of refs with above_strokes == want_above.
+// Returns -1 if none.
+static int find_lowest_idx_in_group(bool want_above) {
+    for (int i = 0; i < g_refs.count; i++) {
+        if (g_refs.items[i].above_strokes == want_above) return i;
+    }
+    return -1;
+}
+
+// Find the next-higher-idx ref with the same group. -1 if none.
+static int next_in_group_up(int idx, bool want_above) {
+    for (int i = idx + 1; i < g_refs.count; i++) {
+        if (g_refs.items[i].above_strokes == want_above) return i;
+    }
+    return -1;
+}
+
+// Find the next-lower-idx ref with the same group. -1 if none.
+static int next_in_group_down(int idx, bool want_above) {
+    for (int i = idx - 1; i >= 0; i--) {
+        if (g_refs.items[i].above_strokes == want_above) return i;
+    }
+    return -1;
+}
+
+// Swap two entries in the items array, updating selection if needed.
+static void swap_items(int a, int b) {
+    if (a == b) return;
+    RefImage tmp = g_refs.items[a];
+    g_refs.items[a] = g_refs.items[b];
+    g_refs.items[b] = tmp;
+    if (g_refs.selected == a)      g_refs.selected = b;
+    else if (g_refs.selected == b) g_refs.selected = a;
+}
+
+// Move item at `from` to `to` by sliding intermediate elements.
+// Handles both directions. Keeps selection pointing at the moved item.
+static void move_item(int from, int to) {
+    if (from == to || from < 0 || to < 0 ||
+        from >= g_refs.count || to >= g_refs.count) return;
+    RefImage tmp = g_refs.items[from];
+    if (from < to) {
+        memmove(&g_refs.items[from], &g_refs.items[from + 1],
+                (to - from) * sizeof(RefImage));
+    } else {
+        memmove(&g_refs.items[to + 1], &g_refs.items[to],
+                (from - to) * sizeof(RefImage));
+    }
+    g_refs.items[to] = tmp;
+
+    if (g_refs.selected == from) {
+        g_refs.selected = to;
+    } else if (g_refs.selected != -1) {
+        // Adjust selection if it was between from and to
+        if (from < to && g_refs.selected > from && g_refs.selected <= to) {
+            g_refs.selected--;
+        } else if (from > to && g_refs.selected >= to && g_refs.selected < from) {
+            g_refs.selected++;
+        }
+    }
+}
+
+void refimage_move_up(int idx) {
+    if (idx < 0 || idx >= g_refs.count) return;
+    bool above = g_refs.items[idx].above_strokes;
+
+    int next = next_in_group_up(idx, above);
+    if (next >= 0) {
+        // Swap within group
+        swap_items(idx, next);
+        g_refs.dirty_after_release = 1;
+        return;
+    }
+
+    // At top of own group
+    if (!above) {
+        // Moving up out of below-group: flip to above, place at lowest
+        // array idx among above-refs.
+        int anchor = find_lowest_idx_in_group(true);
+        int target = (anchor >= 0) ? anchor : 0;
+        g_refs.items[idx].above_strokes = true;
+        move_item(idx, target);
+        g_refs.dirty_after_release = 1;
+    }
+    // else already at very top — no-op
+}
+
+void refimage_move_down(int idx) {
+    if (idx < 0 || idx >= g_refs.count) return;
+    bool above = g_refs.items[idx].above_strokes;
+
+    int next = next_in_group_down(idx, above);
+    if (next >= 0) {
+        // Swap within group (next is lower-idx than idx)
+        swap_items(idx, next);
+        g_refs.dirty_after_release = 1;
+        return;
+    }
+
+    // At bottom of own group
+    if (above) {
+        // Moving down out of above-group: flip to below, place at highest
+        // array idx among below-refs.
+        int anchor = find_highest_idx_in_group(false);
+        int target = (anchor >= 0) ? anchor : g_refs.count - 1;
+        g_refs.items[idx].above_strokes = false;
+        move_item(idx, target);
+        g_refs.dirty_after_release = 1;
+    }
+    // else already at very bottom — no-op
 }
 
 #endif // REFIMAGE_IMPLEMENTATION

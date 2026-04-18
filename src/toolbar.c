@@ -482,6 +482,7 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
                     continue;
                 }
                 if (lpress && CheckCollisionPointRec(mouse, name_hit)) {
+                    refimage_select(-1);
                     canvas_set_active_layer(c, li);
                 }
             }
@@ -500,10 +501,20 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
                 canvas_add_layer(c);
             if (CheckCollisionPointRec(mouse, r_del))
                 canvas_delete_layer(c, c->active_layer);
-            if (CheckCollisionPointRec(mouse, r_up))
-                canvas_move_layer(c, c->active_layer, c->active_layer + 1);
-            if (CheckCollisionPointRec(mouse, r_down))
-                canvas_move_layer(c, c->active_layer, c->active_layer - 1);
+            if (CheckCollisionPointRec(mouse, r_up)) {
+                int sel = refimage_selected();
+                if (sel >= 0)
+                    refimage_move_up(sel);
+                else
+                    canvas_move_layer(c, c->active_layer, c->active_layer + 1);
+            }
+            if (CheckCollisionPointRec(mouse, r_down)) {
+                int sel = refimage_selected();
+                if (sel >= 0)
+                    refimage_move_down(sel);
+                else
+                    canvas_move_layer(c, c->active_layer, c->active_layer - 1);
+            }
 
             // Auto-scroll to keep active layer visible after button ops
             int active_vrow = n_refs + (n_layers - 1 - c->active_layer);
