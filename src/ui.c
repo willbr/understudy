@@ -852,7 +852,7 @@ static void help_draw(void) {
     DrawUI("Toggle ref lock",  rx, y, 13, LIGHTGRAY); y += gap;
     DrawUI("Tab",      lx, y, 13, (Color){120, 180, 255, 255});
     DrawUI("Toggle toolbar",   rx, y, 13, LIGHTGRAY); y += gap;
-    DrawUI("?",        lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("/",        lx, y, 13, (Color){120, 180, 255, 255});
     DrawUI("This help",        rx, y, 13, LIGHTGRAY); y += gap + 10;
 
     DrawUI("Click or Esc to close", (int)px + 70, y, 12, (Color){80, 80, 80, 255});

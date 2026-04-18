@@ -196,9 +196,8 @@ int main(void) {
             if (!toolbar_hidden)
                 ev = toolbar_update(&app.tools, &app.canvas);
 
-            // ? = help overlay
-            if (IsKeyPressed(KEY_SLASH) &&
-                (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))) {
+            // / = help overlay
+            if (IsKeyPressed(KEY_SLASH)) {
                 app.ui.mode = UI_HELP;
             }
 
