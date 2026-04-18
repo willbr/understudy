@@ -32,6 +32,7 @@ typedef struct {
     int      stroke_count;
     int      stroke_capacity;
     bool     visible;
+    float    z;              // unified z-order; higher = rendered on top
 } Layer;
 
 typedef struct Canvas {
@@ -54,6 +55,7 @@ typedef struct Canvas {
     bool    dirty;           // unsaved changes
     float   view_x, view_y;  // pan offset (screen pixels)
     float   zoom;            // scale factor: 1.0 = 100%
+    float   next_z;          // monotonic counter for z assignment
 } Canvas;
 
 void canvas_init(Canvas *c);
@@ -96,8 +98,15 @@ void canvas_draw_paper(const Canvas *c, int x_offset);
 // Strokes layer (transparent where no ink)
 void canvas_draw_strokes(const Canvas *c, int x_offset);
 
+// Render just one layer's strokes through the ink shader and blit to screen.
+// Does nothing if the layer is invisible or has no strokes.
+void canvas_draw_layer(Canvas *c, int li, int x_offset);
+
 // Document border (drawn on top of everything canvas-related)
 void canvas_draw_border(const Canvas *c, int x_offset);
+
+// Bump next_z so that z+1 <= next_z (used after loading refs from DB)
+void canvas_bump_next_z_to(Canvas *c, float z);
 
 // Low-level rendering (used by line tool preview)
 void render_stroke_transformed(const Stroke *s, float vx, float vy, float zoom);

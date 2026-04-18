@@ -5,6 +5,7 @@
 #include "refimage.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 #define TB_W        220
@@ -76,6 +77,65 @@ static bool small_button(Rectangle r, const char *label) {
     DrawUI(label, (int)(r.x + r.width / 2 - fw / 2),
              (int)(r.y + r.height / 2 - 6), 12, WHITE);
     return hovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+}
+
+// ── Z-order helpers ───────────────────────────────────────────────────────────
+
+typedef struct {
+    int kind;   // 0 = layer, 1 = ref
+    int idx;
+    float z;
+} ZItem;
+
+static int build_z_items(Canvas *c, ZItem *out, int max_out) {
+    int n = 0;
+    for (int li = 0; li < c->layer_count && n < max_out; li++) {
+        out[n].kind = 0;
+        out[n].idx  = li;
+        out[n].z    = c->layers[li].z;
+        n++;
+    }
+    int nr = refimage_count();
+    for (int ri = 0; ri < nr && n < max_out; ri++) {
+        out[n].kind = 1;
+        out[n].idx  = ri;
+        out[n].z    = refimage_get_z(ri);
+        n++;
+    }
+    return n;
+}
+
+static int cmp_zitem_desc(const void *a, const void *b) {
+    const ZItem *ia = a, *ib = b;
+    if (ia->z < ib->z) return  1;
+    if (ia->z > ib->z) return -1;
+    return 0;
+}
+
+// Find index of the item with smallest z greater than z0. Returns -1 if none.
+static int find_next_higher(ZItem *items, int n, float z0) {
+    int best = -1;
+    float best_z = 1e30f;
+    for (int i = 0; i < n; i++) {
+        if (items[i].z > z0 && items[i].z < best_z) {
+            best = i;
+            best_z = items[i].z;
+        }
+    }
+    return best;
+}
+
+// Find index of the item with largest z less than z0. Returns -1 if none.
+static int find_next_lower(ZItem *items, int n, float z0) {
+    int best = -1;
+    float best_z = -1e30f;
+    for (int i = 0; i < n; i++) {
+        if (items[i].z < z0 && items[i].z > best_z) {
+            best = i;
+            best_z = items[i].z;
+        }
+    }
+    return best;
 }
 
 // ── Scroll state ─────────────────────────────────────────────────────────────
@@ -207,13 +267,14 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
     button((Rectangle){TB_PAD, Y_BTN_CROP,   TB_INNER, BTN_H}, "Crop",       false);
     button((Rectangle){TB_PAD, Y_BTN_RESIZE, TB_INNER, BTN_H}, "Resize",     false);
 
-    // ── Combined list: above-refs / stroke layers / below-refs ───────────────
+    // ── Combined list: z-sorted (descending = top first) ─────────────────────
     {
-        int n_above  = refimage_count_in_group(true);
-        int n_below  = refimage_count_in_group(false);
-        int n_refs   = n_above + n_below;
+        ZItem items[MAX_LAYERS + 64];
+        int n_rows = build_z_items((Canvas *)c, items, (int)(sizeof(items)/sizeof(items[0])));
+        qsort(items, n_rows, sizeof(ZItem), cmp_zitem_desc);
+
+        int n_refs   = refimage_count();
         int n_layers = c->layer_count;
-        int n_rows   = n_above + n_layers + n_below;
 
         char lbl[40];
         if (n_refs > 0)
@@ -231,34 +292,15 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
         int selected_ref  = refimage_selected();
         int renaming_ref  = refimage_rename_active() ? refimage_rename_index() : -1;
 
-        // Virtual row layout:
-        //   [0, n_above)            → above-refs   (highest array idx at top)
-        //   [n_above, n_above+n_layers) → stroke layers (top layer first)
-        //   [n_above+n_layers, n_rows)  → below-refs   (highest array idx at top)
         for (int i = 0; i < visible; i++) {
             int vrow = i + list_scroll;
             if (vrow < 0 || vrow >= n_rows) continue;
             float ry = Y_LIST + i * ROW_H;
             Rectangle row = {TB_PAD, ry, TB_INNER, ROW_H - 2};
+            ZItem *it = &items[vrow];
 
-            int ri = -1;
-            int li = -1;
-            if (vrow < n_above) {
-                // Above-ref section: newest first within the group
-                int k = n_above - 1 - vrow;
-                ri = refimage_index_in_group(true, k);
-            } else if (vrow < n_above + n_layers) {
-                // Stroke layer section
-                int local = vrow - n_above;
-                li = n_layers - 1 - local;
-            } else {
-                // Below-ref section: newest first within the group
-                int local = vrow - n_above - n_layers;
-                int k = n_below - 1 - local;
-                ri = refimage_index_in_group(false, k);
-            }
-
-            if (ri >= 0) {
+            if (it->kind == 1) {
+                int ri = it->idx;
                 RefImage *r = refimage_get(ri);
 
                 Color bg = (ri == selected_ref)
@@ -286,8 +328,8 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
                     const char *nm = r->name[0] ? r->name : "(unnamed)";
                     DrawUI(nm, (int)row.x + 36, (int)ry + 5, 12, WHITE);
                 }
-            } else if (li >= 0 && li < n_layers) {
-                // Stroke layer row: top layer first
+            } else {
+                int li = it->idx;
                 bool layer_is_focused = (li == c->active_layer) && selected_ref < 0;
                 Color bg = layer_is_focused
                            ? (Color){50, 70, 120, 255}
@@ -331,7 +373,7 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
 
     // Combined list scrollbar (inside the list panel area)
     {
-        int n_rows = refimage_count_in_group(true) + c->layer_count + refimage_count_in_group(false);
+        int n_rows = c->layer_count + refimage_count();
         if (n_rows > MAX_VISIBLE_ROWS) {
             int content = n_rows * ROW_H;
             int visible_h = MAX_VISIBLE_ROWS * ROW_H;
@@ -362,7 +404,7 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
     // Scroll: combined list takes priority when hovered
     float wheel = GetMouseWheelMove();
     if (wheel != 0.0f) {
-        int n_rows_total = refimage_count_in_group(true) + c->layer_count + refimage_count_in_group(false);
+        int n_rows_total = c->layer_count + refimage_count();
         if (over_list_check && n_rows_total > MAX_VISIBLE_ROWS) {
             list_scroll -= (int)wheel;
             int mls = n_rows_total - MAX_VISIBLE_ROWS;
@@ -446,11 +488,11 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
 
     // ── Combined list interaction ─────────────────────────────────────────────
     {
-        int n_above  = refimage_count_in_group(true);
-        int n_below  = refimage_count_in_group(false);
-        int n_layers = c->layer_count;
-        int n_rows   = n_above + n_layers + n_below;
+        ZItem items[MAX_LAYERS + 64];
+        int n_rows = build_z_items(c, items, (int)(sizeof(items)/sizeof(items[0])));
+        qsort(items, n_rows, sizeof(ZItem), cmp_zitem_desc);
 
+        int n_layers = c->layer_count;
         int visible = n_rows < MAX_VISIBLE_ROWS ? n_rows : MAX_VISIBLE_ROWS;
         int renaming = refimage_rename_active() ? refimage_rename_index() : -1;
 
@@ -459,22 +501,10 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
             if (vrow < 0 || vrow >= n_rows) continue;
             float ry = Y_LIST + i * ROW_H;
             Rectangle row = {TB_PAD, ry, TB_INNER, ROW_H - 2};
+            ZItem *it = &items[vrow];
 
-            int ri = -1;
-            int li = -1;
-            if (vrow < n_above) {
-                int k = n_above - 1 - vrow;
-                ri = refimage_index_in_group(true, k);
-            } else if (vrow < n_above + n_layers) {
-                int local = vrow - n_above;
-                li = n_layers - 1 - local;
-            } else {
-                int local = vrow - n_above - n_layers;
-                int k = n_below - 1 - local;
-                ri = refimage_index_in_group(false, k);
-            }
-
-            if (ri >= 0) {
+            if (it->kind == 1) {
+                int ri = it->idx;
                 Rectangle vis_hit  = {row.x,      row.y, 16, row.height};
                 Rectangle lock_hit = {row.x + 16, row.y, 16, row.height};
                 Rectangle name_hit = {row.x + 32, row.y, row.width - 32, row.height};
@@ -502,7 +532,8 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
                         last_click_idx = ri;
                     }
                 }
-            } else if (li >= 0 && li < n_layers) {
+            } else {
+                int li = it->idx;
                 Rectangle vis_hit = {row.x, row.y, 16, row.height};
                 Rectangle name_hit = {row.x + 16, row.y, row.width - 16, row.height};
 
@@ -517,7 +548,7 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
             }
         }
 
-        // Layer buttons: + - ^ v (stroke layers only)
+        // Layer/ref buttons: + - ^ v
         if (lpress) {
             float btn_y = Y_LAYER_BTNS;
             float bw = (TB_INNER - 12) / 4.0f;
@@ -530,27 +561,75 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
                 canvas_add_layer(c);
             if (CheckCollisionPointRec(mouse, r_del))
                 canvas_delete_layer(c, c->active_layer);
+
             if (CheckCollisionPointRec(mouse, r_up)) {
                 int sel = refimage_selected();
-                if (sel >= 0)
-                    refimage_move_up(sel);
-                else
-                    canvas_move_layer(c, c->active_layer, c->active_layer + 1);
-            }
-            if (CheckCollisionPointRec(mouse, r_down)) {
-                int sel = refimage_selected();
-                if (sel >= 0)
-                    refimage_move_down(sel);
-                else
-                    canvas_move_layer(c, c->active_layer, c->active_layer - 1);
+                ZItem zi[MAX_LAYERS + 64];
+                int n_zi = build_z_items(c, zi, (int)(sizeof(zi)/sizeof(zi[0])));
+                if (sel >= 0) {
+                    float my_z = refimage_get_z(sel);
+                    int adj = find_next_higher(zi, n_zi, my_z);
+                    if (adj >= 0) {
+                        float their_z = zi[adj].z;
+                        refimage_set_z(sel, their_z);
+                        if (zi[adj].kind == 0) c->layers[zi[adj].idx].z = my_z;
+                        else refimage_set_z(zi[adj].idx, my_z);
+                        c->dirty = true;
+                    }
+                } else {
+                    float my_z = c->layers[c->active_layer].z;
+                    int adj = find_next_higher(zi, n_zi, my_z);
+                    if (adj >= 0) {
+                        float their_z = zi[adj].z;
+                        c->layers[c->active_layer].z = their_z;
+                        if (zi[adj].kind == 0) c->layers[zi[adj].idx].z = my_z;
+                        else refimage_set_z(zi[adj].idx, my_z);
+                        c->dirty = true;
+                    }
+                }
             }
 
-            // Auto-scroll to keep active layer visible after button ops
-            int active_vrow = n_above + (n_layers - 1 - c->active_layer);
-            if (active_vrow < list_scroll)
-                list_scroll = active_vrow;
-            if (active_vrow >= list_scroll + MAX_VISIBLE_ROWS)
-                list_scroll = active_vrow - MAX_VISIBLE_ROWS + 1;
+            if (CheckCollisionPointRec(mouse, r_down)) {
+                int sel = refimage_selected();
+                ZItem zi[MAX_LAYERS + 64];
+                int n_zi = build_z_items(c, zi, (int)(sizeof(zi)/sizeof(zi[0])));
+                if (sel >= 0) {
+                    float my_z = refimage_get_z(sel);
+                    int adj = find_next_lower(zi, n_zi, my_z);
+                    if (adj >= 0) {
+                        float their_z = zi[adj].z;
+                        refimage_set_z(sel, their_z);
+                        if (zi[adj].kind == 0) c->layers[zi[adj].idx].z = my_z;
+                        else refimage_set_z(zi[adj].idx, my_z);
+                        c->dirty = true;
+                    }
+                } else {
+                    float my_z = c->layers[c->active_layer].z;
+                    int adj = find_next_lower(zi, n_zi, my_z);
+                    if (adj >= 0) {
+                        float their_z = zi[adj].z;
+                        c->layers[c->active_layer].z = their_z;
+                        if (zi[adj].kind == 0) c->layers[zi[adj].idx].z = my_z;
+                        else refimage_set_z(zi[adj].idx, my_z);
+                        c->dirty = true;
+                    }
+                }
+            }
+
+            // Auto-scroll: rebuild sorted list and find active layer's position
+            {
+                ZItem zi2[MAX_LAYERS + 64];
+                int n_zi2 = build_z_items(c, zi2, (int)(sizeof(zi2)/sizeof(zi2[0])));
+                qsort(zi2, n_zi2, sizeof(ZItem), cmp_zitem_desc);
+                for (int vr = 0; vr < n_zi2; vr++) {
+                    if (zi2[vr].kind == 0 && zi2[vr].idx == c->active_layer) {
+                        if (vr < list_scroll) list_scroll = vr;
+                        if (vr >= list_scroll + MAX_VISIBLE_ROWS)
+                            list_scroll = vr - MAX_VISIBLE_ROWS + 1;
+                        break;
+                    }
+                }
+            }
         }
 
         // Inline-rename text input (only while renaming)
@@ -582,25 +661,14 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
             if (lpress) {
                 int idx = refimage_rename_index();
                 if (idx >= 0) {
-                    // Find the virtual row for this ref by scanning all virtual rows
+                    // Find the virtual row for this ref in the sorted list
                     int vrow_of_idx = -1;
                     for (int vr = 0; vr < n_rows; vr++) {
-                        int vri = -1, vli = -1;
-                        if (vr < n_above) {
-                            int k = n_above - 1 - vr;
-                            vri = refimage_index_in_group(true, k);
-                        } else if (vr < n_above + n_layers) {
-                            vli = n_layers - 1 - (vr - n_above);
-                        } else {
-                            int local = vr - n_above - n_layers;
-                            int k = n_below - 1 - local;
-                            vri = refimage_index_in_group(false, k);
+                        if (items[vr].kind == 1 && items[vr].idx == idx) {
+                            vrow_of_idx = vr; break;
                         }
-                        (void)vli;
-                        if (vri == idx) { vrow_of_idx = vr; break; }
                     }
                     if (vrow_of_idx < 0) {
-                        // Ref not found in list — commit immediately
                         refimage_rename_commit();
                     } else {
                         int row_i = vrow_of_idx - list_scroll;
@@ -617,6 +685,7 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
                 }
             }
         }
+        (void)n_layers;
     }
 
     return ev;

@@ -70,6 +70,7 @@ static void layer_init(Layer *l, const char *name) {
     memset(l, 0, sizeof(*l));
     snprintf(l->name, LAYER_NAME_LEN, "%s", name);
     l->visible = true;
+    l->z = 0.0f;  // caller assigns next_z
 }
 
 static Layer *active_layer(Canvas *c) {
@@ -356,7 +357,9 @@ void canvas_init(Canvas *c) {
     memset(c->layers, 0, sizeof(c->layers));
     c->layer_count  = 1;
     c->active_layer = 0;
+    c->next_z       = 0.0f;
     layer_init(&c->layers[0], "Background");
+    c->layers[0].z  = c->next_z++;
 
     memset(&c->current, 0, sizeof(c->current));
     c->is_drawing = false;
@@ -497,7 +500,9 @@ void canvas_clear(Canvas *c) {
         layer_free(&c->layers[i]);
     c->layer_count  = 1;
     c->active_layer = 0;
+    c->next_z       = 0.0f;
     layer_init(&c->layers[0], "Background");
+    c->layers[0].z  = c->next_z++;
 
     stroke_free_data(&c->current);
     c->is_drawing = false;
@@ -523,6 +528,13 @@ void canvas_load_layers(Canvas *c, Layer *layers, int layer_count) {
     c->dirty        = false;
 
     free(layers);  // free the container (layer contents now owned by c->layers[])
+
+    // Set next_z to max loaded z + 1 so new layers/refs don't collide
+    float max_z = 0.0f;
+    for (int i = 0; i < c->layer_count; i++) {
+        if (c->layers[i].z > max_z) max_z = c->layers[i].z;
+    }
+    c->next_z = max_z + 1.0f;
 
     reset_view(c);
     redraw_all(c);
@@ -762,6 +774,7 @@ int canvas_add_layer(Canvas *c) {
     char name[LAYER_NAME_LEN];
     snprintf(name, sizeof(name), "Layer %d", c->layer_count);
     layer_init(&c->layers[idx], name);
+    c->layers[idx].z = c->next_z++;
 
     c->active_layer = idx;
     c->dirty = true;
@@ -826,4 +839,33 @@ void canvas_move_layer(Canvas *c, int from, int to) {
     c->dirty = true;
     redraw_all(c);
     update_minimap(c);
+}
+
+void canvas_bump_next_z_to(Canvas *c, float z) {
+    if (z + 1.0f > c->next_z) c->next_z = z + 1.0f;
+}
+
+void canvas_draw_layer(Canvas *c, int li, int x_offset) {
+    if (li < 0 || li >= c->layer_count) return;
+    Layer *l = &c->layers[li];
+    if (!l->visible || l->stroke_count == 0) return;
+
+    int pw = c->strokes_rt.texture.width;
+    int ph = c->strokes_rt.texture.height;
+
+    // Render this layer's strokes into strokes_rt
+    BeginTextureMode(c->strokes_rt);
+    ClearBackground(BLANK);
+    for (int si = 0; si < l->stroke_count; si++)
+        render_stroke_transformed(&l->strokes[si],
+                                  c->view_x, c->view_y, c->zoom);
+    EndTextureMode();
+
+    // Apply ink shader → rt
+    composite_ink(c);
+
+    // Blit rt to screen
+    Rectangle src  = {0, 0, (float)pw, -(float)ph};
+    Rectangle dest = {(float)x_offset, CANVAS_Y, (float)pw, (float)ph};
+    DrawTexturePro(c->rt.texture, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
 }

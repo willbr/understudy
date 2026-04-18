@@ -175,6 +175,11 @@ static void load_list_update(UIState *u, Canvas *canvas, sqlite3 *db) {
         if (db_load_painting(db, m->id, &layers, &lcount, &refs_loaded, &rc, &w, &h)) {
             canvas_load_layers(canvas, layers, lcount);
             refimage_load_from_db(refs_loaded, rc);
+            // Bump next_z to account for loaded refs
+            for (int ri = 0; ri < rc; ri++) {
+                RefImage *r = refimage_get(ri);
+                if (r) canvas_bump_next_z_to(canvas, r->z);
+            }
             strncpy(u->last_saved_name, m->name, 127);
             u->last_saved_name[127] = '\0';
         }

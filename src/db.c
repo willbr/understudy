@@ -25,7 +25,8 @@ static const char *SCHEMA_SQL =
     "  painting_id INTEGER NOT NULL REFERENCES paintings(id) ON DELETE CASCADE,"
     "  layer_idx   INTEGER NOT NULL,"
     "  name        TEXT    NOT NULL,"
-    "  visible     INTEGER NOT NULL DEFAULT 1"
+    "  visible     INTEGER NOT NULL DEFAULT 1,"
+    "  z           REAL    NOT NULL DEFAULT 0"
     ");"
 
     "CREATE TABLE IF NOT EXISTS strokes ("
@@ -50,7 +51,7 @@ static const char *SCHEMA_SQL =
     "  scale         REAL    NOT NULL,"
     "  rotation      REAL    NOT NULL,"
     "  opacity       REAL    NOT NULL,"
-    "  above_strokes INTEGER NOT NULL,"
+    "  z             REAL    NOT NULL,"
     "  name          TEXT    NOT NULL DEFAULT '',"
     "  locked        INTEGER NOT NULL DEFAULT 0,"
     "  visible       INTEGER NOT NULL DEFAULT 1,"
@@ -61,7 +62,7 @@ static const char *SCHEMA_SQL =
 
 // ── Open/close ────────────────────────────────────────────────────────────────
 
-#define SCHEMA_VERSION 5
+#define SCHEMA_VERSION 6
 
 static bool migrate(sqlite3 *db) {
     sqlite3_stmt *stmt;
@@ -152,7 +153,7 @@ int db_save_painting(sqlite3 *db, const char *name,
 
     // Insert layers and their strokes
     const char *ins_layer =
-        "INSERT INTO layers (painting_id, layer_idx, name, visible) VALUES (?, ?, ?, ?);";
+        "INSERT INTO layers (painting_id, layer_idx, name, visible, z) VALUES (?, ?, ?, ?, ?);";
     const char *ins_stroke =
         "INSERT INTO strokes "
         "(painting_id, layer_id, stroke_idx, color_r, color_g, color_b, color_a, radius, tool, points)"
@@ -173,10 +174,11 @@ int db_save_painting(sqlite3 *db, const char *name,
         const Layer *l = &layers[li];
 
         sqlite3_reset(layer_stmt);
-        sqlite3_bind_int (layer_stmt, 1, painting_id);
-        sqlite3_bind_int (layer_stmt, 2, li);
-        sqlite3_bind_text(layer_stmt, 3, l->name, -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int (layer_stmt, 4, l->visible ? 1 : 0);
+        sqlite3_bind_int   (layer_stmt, 1, painting_id);
+        sqlite3_bind_int   (layer_stmt, 2, li);
+        sqlite3_bind_text  (layer_stmt, 3, l->name, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int   (layer_stmt, 4, l->visible ? 1 : 0);
+        sqlite3_bind_double(layer_stmt, 5, l->z);
         if (sqlite3_step(layer_stmt) != SQLITE_DONE) {
             fprintf(stderr, "db_save layer %d: %s\n", li, sqlite3_errmsg(db));
             goto fail;
@@ -209,7 +211,7 @@ int db_save_painting(sqlite3 *db, const char *name,
     if (ref_count > 0 && refs) {
         const char *ins_ref =
             "INSERT INTO ref_images "
-            "(painting_id, image_idx, x, y, scale, rotation, opacity, above_strokes, "
+            "(painting_id, image_idx, x, y, scale, rotation, opacity, z, "
             "name, locked, visible, png_blob) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
         sqlite3_stmt *ref_stmt;
@@ -226,7 +228,7 @@ int db_save_painting(sqlite3 *db, const char *name,
             sqlite3_bind_double(ref_stmt, 5, r->scale);
             sqlite3_bind_double(ref_stmt, 6, r->rotation);
             sqlite3_bind_double(ref_stmt, 7, r->opacity);
-            sqlite3_bind_int   (ref_stmt, 8, r->above_strokes ? 1 : 0);
+            sqlite3_bind_double(ref_stmt, 8, r->z);
             sqlite3_bind_text  (ref_stmt, 9, r->name, -1, SQLITE_TRANSIENT);
             sqlite3_bind_int   (ref_stmt, 10, r->locked ? 1 : 0);
             sqlite3_bind_int   (ref_stmt, 11, r->visible ? 1 : 0);
@@ -285,7 +287,7 @@ bool db_load_painting(sqlite3 *db, int id,
 
     // Fetch layers
     const char *sel_layers =
-        "SELECT id, name, visible FROM layers WHERE painting_id = ? ORDER BY layer_idx ASC;";
+        "SELECT id, name, visible, z FROM layers WHERE painting_id = ? ORDER BY layer_idx ASC;";
     if (sqlite3_prepare_v2(db, sel_layers, -1, &stmt, NULL) != SQLITE_OK) return false;
     sqlite3_bind_int(stmt, 1, id);
 
@@ -312,6 +314,7 @@ bool db_load_painting(sqlite3 *db, int id,
         const char *n = (const char *)sqlite3_column_text(stmt, 1);
         snprintf(l->name, LAYER_NAME_LEN, "%s", n ? n : "Layer");
         l->visible = sqlite3_column_int(stmt, 2) != 0;
+        l->z       = (float)sqlite3_column_double(stmt, 3);
         lcount++;
     }
     sqlite3_finalize(stmt);
@@ -452,7 +455,7 @@ int db_save_ref_images(sqlite3 *db, int painting_id,
     const char *del = "DELETE FROM ref_images WHERE painting_id = ?;";
     const char *ins =
         "INSERT INTO ref_images "
-        "(painting_id, image_idx, x, y, scale, rotation, opacity, above_strokes, "
+        "(painting_id, image_idx, x, y, scale, rotation, opacity, z, "
         "name, locked, visible, png_blob) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
 
@@ -476,7 +479,7 @@ int db_save_ref_images(sqlite3 *db, int painting_id,
         sqlite3_bind_double(ins_stmt, 5, r->scale);
         sqlite3_bind_double(ins_stmt, 6, r->rotation);
         sqlite3_bind_double(ins_stmt, 7, r->opacity);
-        sqlite3_bind_int   (ins_stmt, 8, r->above_strokes ? 1 : 0);
+        sqlite3_bind_double(ins_stmt, 8, r->z);
         sqlite3_bind_text  (ins_stmt, 9, r->name, -1, SQLITE_TRANSIENT);
         sqlite3_bind_int   (ins_stmt, 10, r->locked ? 1 : 0);
         sqlite3_bind_int   (ins_stmt, 11, r->visible ? 1 : 0);
@@ -499,7 +502,7 @@ bool db_load_ref_images(sqlite3 *db, int painting_id,
 
     sqlite3_stmt *stmt;
     const char *sel =
-        "SELECT id, x, y, scale, rotation, opacity, above_strokes, "
+        "SELECT id, x, y, scale, rotation, opacity, z, "
         "name, locked, visible, png_blob "
         "FROM ref_images WHERE painting_id = ? ORDER BY image_idx ASC;";
     if (sqlite3_prepare_v2(db, sel, -1, &stmt, NULL) != SQLITE_OK) return false;
@@ -514,13 +517,13 @@ bool db_load_ref_images(sqlite3 *db, int painting_id,
             arr = realloc(arr, cap * sizeof(RefImage));
         }
         RefImage *r = &arr[cnt];
-        r->db_id         = sqlite3_column_int   (stmt, 0);
-        r->x             = (float)sqlite3_column_double(stmt, 1);
-        r->y             = (float)sqlite3_column_double(stmt, 2);
-        r->scale         = (float)sqlite3_column_double(stmt, 3);
-        r->rotation      = (float)sqlite3_column_double(stmt, 4);
-        r->opacity       = (float)sqlite3_column_double(stmt, 5);
-        r->above_strokes = sqlite3_column_int   (stmt, 6) != 0;
+        r->db_id    = sqlite3_column_int   (stmt, 0);
+        r->x        = (float)sqlite3_column_double(stmt, 1);
+        r->y        = (float)sqlite3_column_double(stmt, 2);
+        r->scale    = (float)sqlite3_column_double(stmt, 3);
+        r->rotation = (float)sqlite3_column_double(stmt, 4);
+        r->opacity  = (float)sqlite3_column_double(stmt, 5);
+        r->z        = (float)sqlite3_column_double(stmt, 6);
 
         const char *nm = (const char *)sqlite3_column_text(stmt, 7);
         if (nm) {

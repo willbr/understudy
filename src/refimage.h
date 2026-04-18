@@ -15,7 +15,7 @@ typedef struct RefImage {
     float scale;                // uniform (preserves aspect)
     float rotation;             // radians
     float opacity;              // 0..1
-    bool  above_strokes;
+    float z;                    // unified z-order; higher = rendered on top
     char  name[64];    // user-editable label
     bool  locked;      // true = skip hit-test
     bool  visible;     // true = render
@@ -36,24 +36,21 @@ void refimage_load_from_db(RefImage *arr, int n);
 int  refimage_count(void);
 RefImage *refimage_get(int i);                // mutable; used by db save
 
-// Count of refs with above_strokes == want_above.
-int  refimage_count_in_group(bool want_above);
-
-// Return the array index of the k-th ref in the group (0-indexed, scanned
-// in array order); or -1 if k is out of range. Group is defined by
-// above_strokes flag. k=0 returns the lowest-array-idx ref in the group.
-int  refimage_index_in_group(bool want_above, int k);
 void refimage_set_defaults(float doc_w, float doc_h);
 
 // Set the newly-added (last) image's name. Truncated to 63 chars.
 void refimage_set_last_name(const char *name);
 
-// Draw all images with above_strokes == want_above.
-// All args describe the canvas viewport so images align with doc coords.
-void refimage_draw(bool want_above,
-                   int canvas_x, int canvas_y,
-                   float view_x, float view_y, float zoom,
-                   int panel_w, int panel_h);
+// Set the z of the newly-added (last) image.
+void refimage_set_last_z(float z);
+
+// Get/set z of a specific ref by index.
+float refimage_get_z(int idx);
+void  refimage_set_z(int idx, float z);
+
+// Draw a single reference image by index.
+void refimage_draw_one(int ri, int canvas_x, int canvas_y,
+                       float view_x, float view_y, float zoom);
 
 // Returns true if input was consumed (selection happened, handle click, etc.).
 // Caller should skip normal canvas input when this returns true.
@@ -73,11 +70,7 @@ void refimage_toggle_locked(int idx);
 void refimage_toggle_visible(int idx);
 void refimage_select(int idx);                            // no-op if out of range; -1 to deselect
 
-// Move the image at idx one slot up / down in the combined list.
-// Crossing the strokes boundary flips above_strokes.
-// No-ops if already at the top/bottom.
-void refimage_move_up(int idx);
-void refimage_move_down(int idx);
+// (Move up/down logic is now handled in toolbar.c using z-swap)
 
 // Inline rename state (managed by whoever draws the refs panel).
 // Returns true iff an image is currently being renamed via inline UI.
@@ -171,22 +164,15 @@ RefImage *refimage_get(int i) {
     return &g_refs.items[i];
 }
 
-int refimage_count_in_group(bool want_above) {
-    int n = 0;
-    for (int i = 0; i < g_refs.count; i++) {
-        if (g_refs.items[i].above_strokes == want_above) n++;
-    }
-    return n;
+float refimage_get_z(int idx) {
+    if (idx < 0 || idx >= g_refs.count) return 0.0f;
+    return g_refs.items[idx].z;
 }
 
-int refimage_index_in_group(bool want_above, int k) {
-    int seen = 0;
-    for (int i = 0; i < g_refs.count; i++) {
-        if (g_refs.items[i].above_strokes != want_above) continue;
-        if (seen == k) return i;
-        seen++;
-    }
-    return -1;
+void refimage_set_z(int idx, float z) {
+    if (idx < 0 || idx >= g_refs.count) return;
+    g_refs.items[idx].z = z;
+    g_refs.dirty_after_release = 1;
 }
 
 static void ensure_capacity(int need) {
@@ -211,7 +197,7 @@ void refimage_add(const unsigned char *png, int png_len, Image decoded) {
     r->scale = 1.0f;
     r->rotation = 0.0f;
     r->opacity = 1.0f;
-    r->above_strokes = true;
+    r->z = 0.0f;          // caller sets via refimage_set_last_z
     r->name[0] = '\0';   // caller should set via refimage_set_last_name
     r->locked  = false;
     r->visible = true;
@@ -247,29 +233,28 @@ void refimage_set_last_name(const char *name) {
     r->name[n] = '\0';
 }
 
-void refimage_draw(bool want_above,
-                   int canvas_x, int canvas_y,
-                   float view_x, float view_y, float zoom,
-                   int panel_w, int panel_h) {
-    BeginScissorMode(canvas_x, canvas_y, panel_w, panel_h);
-    for (int i = 0; i < g_refs.count; i++) {
-        RefImage *r = &g_refs.items[i];
-        if (!r->visible) continue;
-        if (r->above_strokes != want_above) continue;
+void refimage_set_last_z(float z) {
+    if (g_refs.count == 0) return;
+    g_refs.items[g_refs.count - 1].z = z;
+}
 
-        float sx = canvas_x + view_x + r->x * zoom;
-        float sy = canvas_y + view_y + r->y * zoom;
-        float sw = (float)r->src_w * r->scale * zoom;
-        float sh = (float)r->src_h * r->scale * zoom;
+void refimage_draw_one(int ri, int canvas_x, int canvas_y,
+                       float view_x, float view_y, float zoom) {
+    if (ri < 0 || ri >= g_refs.count) return;
+    RefImage *r = &g_refs.items[ri];
+    if (!r->visible) return;
 
-        Rectangle src  = {0, 0, (float)r->src_w, (float)r->src_h};
-        Rectangle dest = {sx, sy, sw, sh};
-        Vector2 origin = {sw * 0.5f, sh * 0.5f};
-        Color tint = {255, 255, 255, (unsigned char)(r->opacity * 255.0f)};
-        DrawTexturePro(r->tex, src, dest, origin,
-                       r->rotation * RAD2DEG, tint);
-    }
-    EndScissorMode();
+    float sx = canvas_x + view_x + r->x * zoom;
+    float sy = canvas_y + view_y + r->y * zoom;
+    float sw = (float)r->src_w * r->scale * zoom;
+    float sh = (float)r->src_h * r->scale * zoom;
+
+    Rectangle src  = {0, 0, (float)r->src_w, (float)r->src_h};
+    Rectangle dest = {sx, sy, sw, sh};
+    Vector2 origin = {sw * 0.5f, sh * 0.5f};
+    Color tint = {255, 255, 255, (unsigned char)(r->opacity * 255.0f)};
+    DrawTexturePro(r->tex, src, dest, origin,
+                   r->rotation * RAD2DEG, tint);
 }
 
 #include <math.h>
@@ -451,9 +436,6 @@ bool refimage_update(int canvas_x, int canvas_y,
                                   panel_w, panel_h);
 
         Rectangle slider = {pr.x + 12, pr.y + 16, pr.width - 24, 10};
-        Rectangle toggle_above = {pr.x + 12, pr.y + 36, (pr.width - 36) * 0.5f, 20};
-        Rectangle toggle_below = {toggle_above.x + toggle_above.width + 4,
-                                  pr.y + 36, toggle_above.width, 20};
         Rectangle lock_btn = {pr.x + pr.width - 58, pr.y + pr.height - 26, 22, 20};
         Rectangle del_btn  = {pr.x + pr.width - 30, pr.y + pr.height - 26, 22, 20};
 
@@ -478,16 +460,6 @@ bool refimage_update(int canvas_x, int canvas_y,
                 if (t < 0) t = 0;
                 if (t > 1) t = 1;
                 r->opacity = t;
-                return true;
-            }
-            if (CheckCollisionPointRec(m, toggle_above)) {
-                r->above_strokes = true;
-                g_refs.dirty_after_release = 1;
-                return true;
-            }
-            if (CheckCollisionPointRec(m, toggle_below)) {
-                r->above_strokes = false;
-                g_refs.dirty_after_release = 1;
                 return true;
             }
             if (CheckCollisionPointRec(m, lock_btn)) {
@@ -655,16 +627,6 @@ void refimage_draw_panel(int canvas_x, int canvas_y,
     DrawRectangleRec(fill, (Color){180, 180, 200, 255});
     DrawRectangleLinesEx(slider, 1.0f, (Color){90, 90, 90, 255});
 
-    // Toggle pill
-    Rectangle ta = {pr.x + 12, pr.y + 36, (pr.width - 36) * 0.5f, 20};
-    Rectangle tb = {ta.x + ta.width + 4, pr.y + 36, ta.width, 20};
-    Color on = {90, 110, 150, 255};
-    Color off = {50, 50, 50, 255};
-    DrawRectangleRec(ta, r->above_strokes ? on : off);
-    DrawRectangleRec(tb, r->above_strokes ? off : on);
-    DrawRectangleLinesEx(ta, 1.0f, (Color){80, 80, 80, 255});
-    DrawRectangleLinesEx(tb, 1.0f, (Color){80, 80, 80, 255});
-
     // Lock + Delete buttons
     Rectangle lock_r = {pr.x + pr.width - 58, pr.y + pr.height - 26, 22, 20};
     Rectangle del = {pr.x + pr.width - 30, pr.y + pr.height - 26, 22, 20};
@@ -738,128 +700,6 @@ void  refimage_rename_buffer_set_len(int len) {
     g_refs.rename_buf[len] = '\0';
 }
 
-// ── refimage_move_up / refimage_move_down helpers ────────────────────────────
-
-// Find the highest array index of refs with above_strokes == want_above.
-// Returns -1 if none.
-static int find_highest_idx_in_group(bool want_above) {
-    int found = -1;
-    for (int i = 0; i < g_refs.count; i++) {
-        if (g_refs.items[i].above_strokes == want_above) found = i;
-    }
-    return found;
-}
-
-// Find the lowest array index of refs with above_strokes == want_above.
-// Returns -1 if none.
-static int find_lowest_idx_in_group(bool want_above) {
-    for (int i = 0; i < g_refs.count; i++) {
-        if (g_refs.items[i].above_strokes == want_above) return i;
-    }
-    return -1;
-}
-
-// Find the next-higher-idx ref with the same group. -1 if none.
-static int next_in_group_up(int idx, bool want_above) {
-    for (int i = idx + 1; i < g_refs.count; i++) {
-        if (g_refs.items[i].above_strokes == want_above) return i;
-    }
-    return -1;
-}
-
-// Find the next-lower-idx ref with the same group. -1 if none.
-static int next_in_group_down(int idx, bool want_above) {
-    for (int i = idx - 1; i >= 0; i--) {
-        if (g_refs.items[i].above_strokes == want_above) return i;
-    }
-    return -1;
-}
-
-// Swap two entries in the items array, updating selection if needed.
-static void swap_items(int a, int b) {
-    if (a == b) return;
-    RefImage tmp = g_refs.items[a];
-    g_refs.items[a] = g_refs.items[b];
-    g_refs.items[b] = tmp;
-    if (g_refs.selected == a)      g_refs.selected = b;
-    else if (g_refs.selected == b) g_refs.selected = a;
-}
-
-// Move item at `from` to `to` by sliding intermediate elements.
-// Handles both directions. Keeps selection pointing at the moved item.
-static void move_item(int from, int to) {
-    if (from == to || from < 0 || to < 0 ||
-        from >= g_refs.count || to >= g_refs.count) return;
-    RefImage tmp = g_refs.items[from];
-    if (from < to) {
-        memmove(&g_refs.items[from], &g_refs.items[from + 1],
-                (to - from) * sizeof(RefImage));
-    } else {
-        memmove(&g_refs.items[to + 1], &g_refs.items[to],
-                (from - to) * sizeof(RefImage));
-    }
-    g_refs.items[to] = tmp;
-
-    if (g_refs.selected == from) {
-        g_refs.selected = to;
-    } else if (g_refs.selected != -1) {
-        // Adjust selection if it was between from and to
-        if (from < to && g_refs.selected > from && g_refs.selected <= to) {
-            g_refs.selected--;
-        } else if (from > to && g_refs.selected >= to && g_refs.selected < from) {
-            g_refs.selected++;
-        }
-    }
-}
-
-void refimage_move_up(int idx) {
-    if (idx < 0 || idx >= g_refs.count) return;
-    bool above = g_refs.items[idx].above_strokes;
-
-    int next = next_in_group_up(idx, above);
-    if (next >= 0) {
-        // Swap within group
-        swap_items(idx, next);
-        g_refs.dirty_after_release = 1;
-        return;
-    }
-
-    // At top of own group
-    if (!above) {
-        // Moving up out of below-group: flip to above, place at lowest
-        // array idx among above-refs.
-        int anchor = find_lowest_idx_in_group(true);
-        int target = (anchor >= 0) ? anchor : 0;
-        g_refs.items[idx].above_strokes = true;
-        move_item(idx, target);
-        g_refs.dirty_after_release = 1;
-    }
-    // else already at very top — no-op
-}
-
-void refimage_move_down(int idx) {
-    if (idx < 0 || idx >= g_refs.count) return;
-    bool above = g_refs.items[idx].above_strokes;
-
-    int next = next_in_group_down(idx, above);
-    if (next >= 0) {
-        // Swap within group (next is lower-idx than idx)
-        swap_items(idx, next);
-        g_refs.dirty_after_release = 1;
-        return;
-    }
-
-    // At bottom of own group
-    if (above) {
-        // Moving down out of above-group: flip to below, place at highest
-        // array idx among below-refs.
-        int anchor = find_highest_idx_in_group(false);
-        int target = (anchor >= 0) ? anchor : g_refs.count - 1;
-        g_refs.items[idx].above_strokes = false;
-        move_item(idx, target);
-        g_refs.dirty_after_release = 1;
-    }
-    // else already at very bottom — no-op
-}
+// (Move up/down is now handled in toolbar.c via z-swap)
 
 #endif // REFIMAGE_IMPLEMENTATION

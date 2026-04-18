@@ -130,6 +130,8 @@ int main(void) {
                         refimage_add(bytes, len, img);
                         refimage_set_defaults((float)app.canvas.width,
                                               (float)app.canvas.height);
+                        refimage_set_last_z(app.canvas.next_z);
+                        app.canvas.next_z += 1.0f;
                         const char *fname = GetFileName(list.paths[i]);
                         refimage_set_last_name(fname);
                         app.canvas.dirty = true;
@@ -152,6 +154,8 @@ int main(void) {
                             refimage_add(png, len, img);
                             refimage_set_defaults((float)app.canvas.width,
                                                   (float)app.canvas.height);
+                            refimage_set_last_z(app.canvas.next_z);
+                            app.canvas.next_z += 1.0f;
                             char pname[32];
                             snprintf(pname, sizeof(pname), "Pasted %d", refimage_count());
                             refimage_set_last_name(pname);
@@ -535,15 +539,46 @@ int main(void) {
 
             canvas_draw_dark_bg(&app.canvas, canvas_x);
             canvas_draw_paper(&app.canvas, canvas_x);
-            refimage_draw(false,                                           // below
-                          canvas_x, CANVAS_Y,
-                          app.canvas.view_x, app.canvas.view_y, app.canvas.zoom,
-                          app.canvas.rt.texture.width, app.canvas.rt.texture.height);
-            canvas_draw_strokes(&app.canvas, canvas_x);
-            refimage_draw(true,                                            // above
-                          canvas_x, CANVAS_Y,
-                          app.canvas.view_x, app.canvas.view_y, app.canvas.zoom,
-                          app.canvas.rt.texture.width, app.canvas.rt.texture.height);
+
+            // Sort all layers and refs by ascending z, draw in order
+            {
+                typedef struct { int kind; int idx; float z; } ZI;
+                ZI zi[MAX_LAYERS + 64];
+                int n_zi = 0;
+                for (int li = 0; li < app.canvas.layer_count; li++) {
+                    zi[n_zi].kind = 0;
+                    zi[n_zi].idx  = li;
+                    zi[n_zi].z    = app.canvas.layers[li].z;
+                    n_zi++;
+                }
+                for (int ri = 0; ri < refimage_count(); ri++) {
+                    zi[n_zi].kind = 1;
+                    zi[n_zi].idx  = ri;
+                    zi[n_zi].z    = refimage_get(ri)->z;
+                    n_zi++;
+                }
+                // Bubble sort ascending z (small n)
+                for (int a = 0; a < n_zi; a++)
+                    for (int b = a + 1; b < n_zi; b++)
+                        if (zi[a].z > zi[b].z) {
+                            ZI tmp = zi[a]; zi[a] = zi[b]; zi[b] = tmp;
+                        }
+
+                int pw = app.canvas.rt.texture.width;
+                int ph = app.canvas.rt.texture.height;
+                BeginScissorMode(canvas_x, CANVAS_Y, pw, ph);
+                for (int i = 0; i < n_zi; i++) {
+                    if (zi[i].kind == 1) {
+                        refimage_draw_one(zi[i].idx, canvas_x, CANVAS_Y,
+                                          app.canvas.view_x, app.canvas.view_y,
+                                          app.canvas.zoom);
+                    } else {
+                        canvas_draw_layer(&app.canvas, zi[i].idx, canvas_x);
+                    }
+                }
+                EndScissorMode();
+            }
+
             refimage_draw_selection_overlay(canvas_x, CANVAS_Y,
                                             app.canvas.view_x, app.canvas.view_y,
                                             app.canvas.zoom);
