@@ -848,7 +848,10 @@ void canvas_bump_next_z_to(Canvas *c, float z) {
 void canvas_draw_layer(Canvas *c, int li, int x_offset) {
     if (li < 0 || li >= c->layer_count) return;
     Layer *l = &c->layers[li];
-    if (!l->visible || l->stroke_count == 0) return;
+    bool active_with_inprogress =
+        (li == c->active_layer) && c->is_drawing && c->current.count > 0;
+    if (!l->visible) return;
+    if (l->stroke_count == 0 && !active_with_inprogress) return;
 
     int pw = c->strokes_rt.texture.width;
     int ph = c->strokes_rt.texture.height;
@@ -858,6 +861,9 @@ void canvas_draw_layer(Canvas *c, int li, int x_offset) {
     ClearBackground(BLANK);
     for (int si = 0; si < l->stroke_count; si++)
         render_stroke_transformed(&l->strokes[si],
+                                  c->view_x, c->view_y, c->zoom);
+    if (active_with_inprogress)
+        render_stroke_transformed(&c->current,
                                   c->view_x, c->view_y, c->zoom);
     EndTextureMode();
 
