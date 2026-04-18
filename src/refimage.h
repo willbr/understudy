@@ -437,8 +437,7 @@ bool refimage_update(int canvas_x, int canvas_y,
                                   panel_w, panel_h);
 
         Rectangle slider = {pr.x + 12, pr.y + 16, pr.width - 24, 10};
-        Rectangle lock_btn = {pr.x + pr.width - 58, pr.y + pr.height - 26, 22, 20};
-        Rectangle del_btn  = {pr.x + pr.width - 30, pr.y + pr.height - 26, 22, 20};
+        Rectangle lock_btn = {pr.x + pr.width - 30, pr.y + pr.height - 26, 22, 20};
 
         // Continue dragging slider (mode stays REF_IDLE; slider_dragging flag)
         if (g_refs.slider_dragging) {
@@ -465,16 +464,6 @@ bool refimage_update(int canvas_x, int canvas_y,
             }
             if (CheckCollisionPointRec(m, lock_btn)) {
                 r->locked = !r->locked;
-                g_refs.dirty_after_release = 1;
-                return true;
-            }
-            if (CheckCollisionPointRec(m, del_btn)) {
-                free_item(r);
-                memmove(&g_refs.items[g_refs.selected],
-                        &g_refs.items[g_refs.selected + 1],
-                        (g_refs.count - g_refs.selected - 1) * sizeof(RefImage));
-                g_refs.count--;
-                g_refs.selected = -1;
                 g_refs.dirty_after_release = 1;
                 return true;
             }
@@ -628,14 +617,11 @@ void refimage_draw_panel(int canvas_x, int canvas_y,
     DrawRectangleRec(fill, (Color){180, 180, 200, 255});
     DrawRectangleLinesEx(slider, 1.0f, (Color){90, 90, 90, 255});
 
-    // Lock + Delete buttons
-    Rectangle lock_r = {pr.x + pr.width - 58, pr.y + pr.height - 26, 22, 20};
-    Rectangle del = {pr.x + pr.width - 30, pr.y + pr.height - 26, 22, 20};
+    // Lock button
+    Rectangle lock_r = {pr.x + pr.width - 30, pr.y + pr.height - 26, 22, 20};
     DrawRectangleRec(lock_r,
                      r->locked ? (Color){200, 140, 40, 255} : (Color){60, 60, 60, 255});
     DrawRectangleLinesEx(lock_r, 1.0f, (Color){120, 120, 120, 255});
-    DrawRectangleRec(del, (Color){120, 40, 40, 255});
-    DrawRectangleLinesEx(del, 1.0f, (Color){200, 80, 80, 255});
 }
 
 void refimage_rename(int idx, const char *name) {
