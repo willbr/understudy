@@ -622,17 +622,21 @@ int main(void) {
 
                 int pw = app.canvas.rt.texture.width;
                 int ph = app.canvas.rt.texture.height;
-                BeginScissorMode(canvas_x, CANVAS_Y, pw, ph);
                 for (int i = 0; i < n_zi; i++) {
                     if (zi[i].kind == 1) {
+                        // Refs draw via DrawTexturePro in screen coords; clip to the
+                        // canvas panel so they don't bleed over the toolbar.
+                        BeginScissorMode(canvas_x, CANVAS_Y, pw, ph);
                         refimage_draw_one(zi[i].idx, canvas_x, CANVAS_Y,
                                           app.canvas.view_x, app.canvas.view_y,
                                           app.canvas.zoom);
+                        EndScissorMode();
                     } else {
+                        // canvas_draw_layer uses BeginTextureMode internally; an
+                        // outer scissor would leak into the RT render and clip it.
                         canvas_draw_layer(&app.canvas, zi[i].idx, canvas_x);
                     }
                 }
-                EndScissorMode();
             }
 
             refimage_draw_selection_overlay(canvas_x, CANVAS_Y,
