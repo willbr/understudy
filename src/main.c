@@ -303,12 +303,18 @@ int main(void) {
                 color_picker_open = false;
             }
 
-            // S held = line tool; release returns to brush
-            if (IsKeyDown(KEY_S)) {
+            // Shift held = line tool; release restores previous tool
+            bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+            static bool was_shift_line = false;
+            static ToolType tool_before_shift = TOOL_BRUSH;
+            if (shift && !was_shift_line) {
+                tool_before_shift = app.tools.active_tool;
                 app.tools.active_tool = TOOL_LINE;
-            } else if (IsKeyReleased(KEY_S)) {
-                app.tools.active_tool = TOOL_BRUSH;
+                was_shift_line = true;
+            } else if (!shift && was_shift_line) {
+                app.tools.active_tool = tool_before_shift;
                 line_dragging = false;
+                was_shift_line = false;
             }
 
             // Z = zoom rect (hold Z, drag rect, release to zoom to fit)

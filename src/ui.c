@@ -680,6 +680,8 @@ static void help_draw(void) {
     DrawUI("Scrub zoom",       rx, y, 13, LIGHTGRAY); y += gap;
     DrawUI("D + drag", lx, y, 13, (Color){120, 180, 255, 255});
     DrawUI("Scrub brush size", rx, y, 13, LIGHTGRAY); y += gap;
+    DrawUI("Shift + drag", lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("Straight line",    rx, y, 13, LIGHTGRAY); y += gap;
     DrawUI("F (hold)", lx, y, 13, (Color){120, 180, 255, 255});
     DrawUI("Color picker",     rx, y, 13, LIGHTGRAY); y += gap;
     DrawUI("E + click",lx, y, 13, (Color){120, 180, 255, 255});
