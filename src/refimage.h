@@ -622,6 +622,9 @@ void refimage_draw_panel(int canvas_x, int canvas_y,
     DrawRectangleRec(lock_r,
                      r->locked ? (Color){200, 140, 40, 255} : (Color){60, 60, 60, 255});
     DrawRectangleLinesEx(lock_r, 1.0f, (Color){120, 120, 120, 255});
+    DrawUI(r->locked ? "L" : "U",
+           (int)lock_r.x + 8, (int)lock_r.y + 4, 12,
+           (Color){255, 255, 255, 255});
 }
 
 void refimage_rename(int idx, const char *name) {

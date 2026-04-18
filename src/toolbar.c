@@ -313,7 +313,7 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
                 DrawUI(vis, (int)row.x + 4, (int)ry + 5, 12,
                        r->visible ? GREEN : (Color){80, 80, 80, 255});
 
-                const char *lock = r->locked ? "L" : "-";
+                const char *lock = r->locked ? "L" : "U";
                 DrawUI(lock, (int)row.x + 20, (int)ry + 5, 12,
                        r->locked ? (Color){220, 160, 50, 255} : (Color){80, 80, 80, 255});
 
