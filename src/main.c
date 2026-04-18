@@ -11,6 +11,8 @@
 #define REFIMAGE_IMPLEMENTATION
 #include "refimage.h"
 
+extern unsigned char *clipboard_image_png(int *out_len);
+
 Font g_font;
 
 #define TARGET_FPS 60
@@ -142,11 +144,11 @@ int main(void) {
                 bool cmd = IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER) ||
                            IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
                 if (cmd && IsKeyPressed(KEY_V)) {
-                    Image img = GetClipboardImage();
-                    if (img.data) {
-                        int len = 0;
-                        unsigned char *png = ExportImageToMemory(img, ".png", &len);
-                        if (png && len > 0) {
+                    int len = 0;
+                    unsigned char *png = clipboard_image_png(&len);
+                    if (png && len > 0) {
+                        Image img = LoadImageFromMemory(".png", png, len);
+                        if (img.data) {
                             refimage_add(png, len, img);
                             refimage_set_defaults((float)app.canvas.width,
                                                   (float)app.canvas.height);
@@ -154,10 +156,10 @@ int main(void) {
                             snprintf(pname, sizeof(pname), "Pasted %d", refimage_count());
                             refimage_set_last_name(pname);
                             app.canvas.dirty = true;
+                            UnloadImage(img);
                         }
-                        if (png) MemFree(png);
-                        UnloadImage(img);
                     }
+                    if (png) free(png);
                 }
             }
 
@@ -293,7 +295,9 @@ int main(void) {
             // Space = pan mode; D = brush size scrub; V = zoom scrub; E = eyedropper
             bool space = IsKeyDown(KEY_SPACE);
             bool sizing = IsKeyDown(KEY_D);
-            bool zooming = IsKeyDown(KEY_V);
+            bool cmd_mod = IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER) ||
+                           IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+            bool zooming = IsKeyDown(KEY_V) && !cmd_mod;
             bool eyedropper = IsKeyDown(KEY_E);
             if (was_sizing && !sizing) {
                 ShowCursor();
