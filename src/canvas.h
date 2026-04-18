@@ -36,6 +36,13 @@ typedef struct {
     float    pan_x;          // per-layer offset in document space
     float    pan_y;
     float    opacity;        // 0..1; 1 = fully opaque
+    // Rasterized committed-strokes cache at the current view transform.
+    // Rebuilt lazily in canvas_draw_layer; kept per-layer so drawing on the
+    // active layer does not trigger re-rasterization of every other layer.
+    RenderTexture2D cache_rt;
+    int      cache_w;        // 0 = unallocated
+    int      cache_h;
+    bool     cache_dirty;
 } Layer;
 
 typedef struct Canvas {
