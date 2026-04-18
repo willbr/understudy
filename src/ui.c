@@ -659,11 +659,13 @@ void ui_open_layer_settings(UIState *u, const Canvas *c, int li) {
     u->layer_settings_idx     = li;
     snprintf(u->layer_settings_name, sizeof(u->layer_settings_name),
              "%s", l->name);
-    u->layer_settings_name_len = (int)strlen(u->layer_settings_name);
-    u->layer_settings_opacity  = l->opacity;
-    u->layer_settings_visible  = l->visible;
-    u->mode                    = UI_LAYER_SETTINGS;
-    u->cursor_blink_t          = 0.0f;
+    u->layer_settings_name_len       = (int)strlen(u->layer_settings_name);
+    u->layer_settings_opacity        = l->opacity;
+    u->layer_settings_visible        = l->visible;
+    u->layer_settings_orig_opacity   = l->opacity;
+    u->layer_settings_orig_visible   = l->visible;
+    u->mode                          = UI_LAYER_SETTINGS;
+    u->cursor_blink_t                = 0.0f;
 }
 
 static void layer_settings_update(UIState *u, Canvas *canvas) {
@@ -686,17 +688,22 @@ static void layer_settings_update(UIState *u, Canvas *canvas) {
     Rectangle ok_r     = {(float)(px + dw - 188), (float)(py + dh - 46), 80, 30};
     Rectangle cancel_r = {(float)(px + dw - 100), (float)(py + dh - 46), 80, 30};
 
-    // Opacity slider drag
+    Layer *live = &canvas->layers[u->layer_settings_idx];
+
+    // Opacity slider drag (live preview — applied to the layer directly)
     if (ldown && CheckCollisionPointRec(m, op_r)) {
         float t = (m.x - op_r.x) / op_r.width;
         if (t < 0.0f) t = 0.0f;
         if (t > 1.0f) t = 1.0f;
         u->layer_settings_opacity = t;
+        live->opacity = t;
     }
 
-    // Visibility toggle
-    if (lpress && CheckCollisionPointRec(m, vis_r))
+    // Visibility toggle (live)
+    if (lpress && CheckCollisionPointRec(m, vis_r)) {
         u->layer_settings_visible = !u->layer_settings_visible;
+        live->visible = u->layer_settings_visible;
+    }
 
     // Name text input
     int ch = GetCharPressed();
@@ -722,16 +729,17 @@ static void layer_settings_update(UIState *u, Canvas *canvas) {
         Layer *l = &canvas->layers[u->layer_settings_idx];
         if (u->layer_settings_name[0])
             snprintf(l->name, LAYER_NAME_LEN, "%s", u->layer_settings_name);
-        l->opacity = u->layer_settings_opacity;
-        l->visible = u->layer_settings_visible;
+        // opacity/visibility already applied live
         canvas->dirty = true;
         u->mode = UI_NONE;
         return;
     }
 
-    // Cancel
+    // Cancel — revert the live-applied opacity/visibility changes
     if (IsKeyPressed(KEY_ESCAPE) ||
         (lpress && CheckCollisionPointRec(m, cancel_r))) {
+        live->opacity = u->layer_settings_orig_opacity;
+        live->visible = u->layer_settings_orig_visible;
         u->mode = UI_NONE;
     }
 }
@@ -740,13 +748,10 @@ static void layer_settings_draw(const UIState *u, const Canvas *canvas) {
     if (u->layer_settings_idx < 0 ||
         u->layer_settings_idx >= canvas->layer_count) return;
 
-    // Dimmed background
-    DrawRectangle(0, 0, WIN_W, WIN_H, (Color){0, 0, 0, 180});
-
     int dw = 360, dh = 260;
     int px = (WIN_W - dw) / 2;
     int py = (WIN_H - dh) / 2;
-    DrawRectangle(px, py, dw, dh, (Color){40, 40, 40, 255});
+    DrawRectangle(px, py, dw, dh, (Color){40, 40, 40, 245});
     DrawRectangleLinesEx((Rectangle){(float)px, (float)py, (float)dw, (float)dh}, 1, GRAY);
 
     DrawUI("Layer Settings", px + 16, py + 14, 16, WHITE);

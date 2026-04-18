@@ -50,6 +50,9 @@ typedef struct {
     int           layer_settings_name_len;
     float         layer_settings_opacity;
     bool          layer_settings_visible;
+    // Originals (for Cancel revert; opacity/visibility are applied live)
+    float         layer_settings_orig_opacity;
+    bool          layer_settings_orig_visible;
 } UIState;
 
 void ui_init(UIState *u);
