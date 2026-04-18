@@ -270,6 +270,12 @@ int main(void) {
             if (!refimage_rename_active() && IsKeyPressed(KEY_H))
                 canvas_toggle_layer_visible(&app.canvas, app.canvas.active_layer);
 
+            // L = toggle lock of the selected ref image (ignored if no ref selected)
+            if (!refimage_rename_active() && IsKeyPressed(KEY_L)) {
+                int sel = refimage_selected();
+                if (sel >= 0) refimage_toggle_locked(sel);
+            }
+
             // Number keys = preset zoom levels (centered on current view)
             {
                 float new_zoom = 0;

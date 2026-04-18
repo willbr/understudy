@@ -692,6 +692,8 @@ static void help_draw(void) {
     DrawUI("New layer",        rx, y, 13, LIGHTGRAY); y += gap;
     DrawUI("H",        lx, y, 13, (Color){120, 180, 255, 255});
     DrawUI("Toggle layer visibility", rx, y, 13, LIGHTGRAY); y += gap;
+    DrawUI("L",        lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("Toggle ref lock",  rx, y, 13, LIGHTGRAY); y += gap;
     DrawUI("Tab",      lx, y, 13, (Color){120, 180, 255, 255});
     DrawUI("Toggle toolbar",   rx, y, 13, LIGHTGRAY); y += gap;
     DrawUI("?",        lx, y, 13, (Color){120, 180, 255, 255});
