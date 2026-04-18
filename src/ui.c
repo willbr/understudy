@@ -463,11 +463,17 @@ static void crop_mode_draw(const UIState *u, const Canvas *c, int canvas_x) {
 
     float rw = sx2 - sx1, rh = sy2 - sy1;
 
+    // Integer edges — derive all four dim rects from the same ints so they
+    // tile exactly with no fractional gaps.
+    int ix1 = (int)sx1, iy1 = (int)sy1;
+    int ix2 = (int)sx2, iy2 = (int)sy2;
+    int iw = WIN_W, ih = WIN_H;
+
     // Dim area outside crop
-    DrawRectangle(0, 0, WIN_W, (int)sy1, Fade(BLACK, 0.4f));
-    DrawRectangle(0, (int)sy2, WIN_W, WIN_H - (int)sy2, Fade(BLACK, 0.4f));
-    DrawRectangle(0, (int)sy1, (int)sx1, (int)rh, Fade(BLACK, 0.4f));
-    DrawRectangle((int)sx2, (int)sy1, WIN_W - (int)sx2, (int)rh, Fade(BLACK, 0.4f));
+    DrawRectangle(0,   0,   iw,        iy1,       Fade(BLACK, 0.4f));
+    DrawRectangle(0,   iy2, iw,        ih - iy2,  Fade(BLACK, 0.4f));
+    DrawRectangle(0,   iy1, ix1,       iy2 - iy1, Fade(BLACK, 0.4f));
+    DrawRectangle(ix2, iy1, iw - ix2,  iy2 - iy1, Fade(BLACK, 0.4f));
 
     // Crop border
     DrawRectangleLinesEx((Rectangle){sx1, sy1, rw, rh}, 2.0f,
