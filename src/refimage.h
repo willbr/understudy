@@ -319,31 +319,44 @@ static int hit_corner(const Vector2 corners[4], Vector2 m) {
     return -1;
 }
 
-// Rotation handle position in screen space: centered above the top edge midpoint,
-// offset along the image's up-axis (rotated).
-static Vector2 rotation_handle_screen(const RefImage *r,
-                                      int canvas_x, int canvas_y,
-                                      float view_x, float view_y, float zoom) {
+// Rotation handle positions in screen space: four positions, one outside each
+// edge midpoint along the image's local axes (rotated).
+// Order: top, right, bottom, left.
+static void rotation_handles_screen(const RefImage *r,
+                                    int canvas_x, int canvas_y,
+                                    float view_x, float view_y, float zoom,
+                                    Vector2 out[4]) {
+    float hw = r->src_w * r->scale * 0.5f;
     float hh = r->src_h * r->scale * 0.5f;
-    // Image-local offset: straight up from top edge mid (in doc units);
-    // add HANDLE_ROT_DIST as screen-pixel gap (/ zoom to convert)
-    float local_y = -(hh + HANDLE_ROT_DIST / zoom);
+    float pad = HANDLE_ROT_DIST / zoom;
     float c = cosf(r->rotation);
     float s = sinf(r->rotation);
-    float dx = r->x + 0 * c - local_y * s;
-    float dy = r->y + 0 * s + local_y * c;
-    return (Vector2){canvas_x + view_x + dx * zoom,
-                     canvas_y + view_y + dy * zoom};
+    Vector2 local[4] = {
+        { 0.0f,        -(hh + pad) },  // top
+        { hw + pad,     0.0f       },  // right
+        { 0.0f,         hh + pad   },  // bottom
+        {-(hw + pad),   0.0f       },  // left
+    };
+    for (int i = 0; i < 4; i++) {
+        float dx = r->x + local[i].x * c - local[i].y * s;
+        float dy = r->y + local[i].x * s + local[i].y * c;
+        out[i].x = canvas_x + view_x + dx * zoom;
+        out[i].y = canvas_y + view_y + dy * zoom;
+    }
 }
 
+// Returns true if mouse is over any rotation handle.
 static bool hit_rotation_handle(const RefImage *r,
                                 int canvas_x, int canvas_y,
                                 float view_x, float view_y, float zoom,
                                 Vector2 m) {
-    Vector2 h = rotation_handle_screen(r, canvas_x, canvas_y,
-                                       view_x, view_y, zoom);
-    float dx = m.x - h.x, dy = m.y - h.y;
-    return dx * dx + dy * dy <= 12.0f * 12.0f;
+    Vector2 rh[4];
+    rotation_handles_screen(r, canvas_x, canvas_y, view_x, view_y, zoom, rh);
+    for (int i = 0; i < 4; i++) {
+        float dx = m.x - rh[i].x, dy = m.y - rh[i].y;
+        if (dx * dx + dy * dy <= 12.0f * 12.0f) return true;
+    }
+    return false;
 }
 
 #define PANEL_W 220.0f
@@ -590,12 +603,20 @@ void refimage_draw_selection_overlay(int canvas_x, int canvas_y,
         DrawRectangleLinesEx(h, 1.0f, (Color){0, 0, 0, 200});
     }
 
-    // Rotation handle (circle) with connector line from top edge midpoint
-    Vector2 rh = rotation_handle_screen(r, canvas_x, canvas_y, view_x, view_y, zoom);
-    Vector2 top_mid = {(cor[0].x + cor[1].x) * 0.5f, (cor[0].y + cor[1].y) * 0.5f};
-    DrawLineEx(top_mid, rh, 1.0f, (Color){0, 0, 0, 180});
-    DrawCircleV(rh, 6.0f, WHITE);
-    DrawCircleLinesV(rh, 6.0f, (Color){0, 0, 0, 200});
+    // Rotation handles (four circles) with connector lines from each edge midpoint
+    Vector2 rh[4];
+    rotation_handles_screen(r, canvas_x, canvas_y, view_x, view_y, zoom, rh);
+    Vector2 mids[4] = {
+        { (cor[0].x + cor[1].x) * 0.5f, (cor[0].y + cor[1].y) * 0.5f }, // top
+        { (cor[1].x + cor[2].x) * 0.5f, (cor[1].y + cor[2].y) * 0.5f }, // right
+        { (cor[2].x + cor[3].x) * 0.5f, (cor[2].y + cor[3].y) * 0.5f }, // bottom
+        { (cor[3].x + cor[0].x) * 0.5f, (cor[3].y + cor[0].y) * 0.5f }, // left
+    };
+    for (int i = 0; i < 4; i++) {
+        DrawLineEx(mids[i], rh[i], 1.0f, (Color){0, 0, 0, 180});
+        DrawCircleV(rh[i], 6.0f, WHITE);
+        DrawCircleLinesV(rh[i], 6.0f, (Color){0, 0, 0, 200});
+    }
 }
 
 void refimage_draw_panel(int canvas_x, int canvas_y,
