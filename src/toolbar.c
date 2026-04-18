@@ -207,11 +207,13 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
     button((Rectangle){TB_PAD, Y_BTN_CROP,   TB_INNER, BTN_H}, "Crop",       false);
     button((Rectangle){TB_PAD, Y_BTN_RESIZE, TB_INNER, BTN_H}, "Resize",     false);
 
-    // ── Combined list: reference images (top) then stroke layers ──────────────
+    // ── Combined list: above-refs / stroke layers / below-refs ───────────────
     {
-        int n_refs   = refimage_count();
+        int n_above  = refimage_count_in_group(true);
+        int n_below  = refimage_count_in_group(false);
+        int n_refs   = n_above + n_below;
         int n_layers = c->layer_count;
-        int n_rows   = n_refs + n_layers;
+        int n_rows   = n_above + n_layers + n_below;
 
         char lbl[40];
         if (n_refs > 0)
@@ -229,17 +231,34 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
         int selected_ref  = refimage_selected();
         int renaming_ref  = refimage_rename_active() ? refimage_rename_index() : -1;
 
-        // Row indices (virtual): 0..n_refs-1 are refs (newest first);
-        // n_refs..n_refs+n_layers-1 are stroke layers (top layer first).
+        // Virtual row layout:
+        //   [0, n_above)            → above-refs   (highest array idx at top)
+        //   [n_above, n_above+n_layers) → stroke layers (top layer first)
+        //   [n_above+n_layers, n_rows)  → below-refs   (highest array idx at top)
         for (int i = 0; i < visible; i++) {
             int vrow = i + list_scroll;
             if (vrow < 0 || vrow >= n_rows) continue;
             float ry = Y_LIST + i * ROW_H;
             Rectangle row = {TB_PAD, ry, TB_INNER, ROW_H - 2};
 
-            if (vrow < n_refs) {
-                // Ref image row: newest ref first
-                int ri = n_refs - 1 - vrow;
+            int ri = -1;
+            int li = -1;
+            if (vrow < n_above) {
+                // Above-ref section: newest first within the group
+                int k = n_above - 1 - vrow;
+                ri = refimage_index_in_group(true, k);
+            } else if (vrow < n_above + n_layers) {
+                // Stroke layer section
+                int local = vrow - n_above;
+                li = n_layers - 1 - local;
+            } else {
+                // Below-ref section: newest first within the group
+                int local = vrow - n_above - n_layers;
+                int k = n_below - 1 - local;
+                ri = refimage_index_in_group(false, k);
+            }
+
+            if (ri >= 0) {
                 RefImage *r = refimage_get(ri);
 
                 Color bg = (ri == selected_ref)
@@ -267,11 +286,8 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
                     const char *nm = r->name[0] ? r->name : "(unnamed)";
                     DrawUI(nm, (int)row.x + 36, (int)ry + 5, 12, WHITE);
                 }
-            } else {
+            } else if (li >= 0 && li < n_layers) {
                 // Stroke layer row: top layer first
-                int li = n_layers - 1 - (vrow - n_refs);
-                if (li < 0 || li >= n_layers) continue;
-
                 Color bg = (li == c->active_layer)
                            ? (Color){50, 70, 120, 255}
                            : (Color){50, 50, 50, 255};
@@ -314,7 +330,7 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
 
     // Combined list scrollbar (inside the list panel area)
     {
-        int n_rows = refimage_count() + c->layer_count;
+        int n_rows = refimage_count_in_group(true) + c->layer_count + refimage_count_in_group(false);
         if (n_rows > MAX_VISIBLE_ROWS) {
             int content = n_rows * ROW_H;
             int visible_h = MAX_VISIBLE_ROWS * ROW_H;
@@ -345,7 +361,7 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
     // Scroll: combined list takes priority when hovered
     float wheel = GetMouseWheelMove();
     if (wheel != 0.0f) {
-        int n_rows_total = refimage_count() + c->layer_count;
+        int n_rows_total = refimage_count_in_group(true) + c->layer_count + refimage_count_in_group(false);
         if (over_list_check && n_rows_total > MAX_VISIBLE_ROWS) {
             list_scroll -= (int)wheel;
             int mls = n_rows_total - MAX_VISIBLE_ROWS;
@@ -429,9 +445,10 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
 
     // ── Combined list interaction ─────────────────────────────────────────────
     {
-        int n_refs   = refimage_count();
+        int n_above  = refimage_count_in_group(true);
+        int n_below  = refimage_count_in_group(false);
         int n_layers = c->layer_count;
-        int n_rows   = n_refs + n_layers;
+        int n_rows   = n_above + n_layers + n_below;
 
         int visible = n_rows < MAX_VISIBLE_ROWS ? n_rows : MAX_VISIBLE_ROWS;
         int renaming = refimage_rename_active() ? refimage_rename_index() : -1;
@@ -442,8 +459,21 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
             float ry = Y_LIST + i * ROW_H;
             Rectangle row = {TB_PAD, ry, TB_INNER, ROW_H - 2};
 
-            if (vrow < n_refs) {
-                int ri = n_refs - 1 - vrow;
+            int ri = -1;
+            int li = -1;
+            if (vrow < n_above) {
+                int k = n_above - 1 - vrow;
+                ri = refimage_index_in_group(true, k);
+            } else if (vrow < n_above + n_layers) {
+                int local = vrow - n_above;
+                li = n_layers - 1 - local;
+            } else {
+                int local = vrow - n_above - n_layers;
+                int k = n_below - 1 - local;
+                ri = refimage_index_in_group(false, k);
+            }
+
+            if (ri >= 0) {
                 Rectangle vis_hit  = {row.x,      row.y, 16, row.height};
                 Rectangle lock_hit = {row.x + 16, row.y, 16, row.height};
                 Rectangle name_hit = {row.x + 32, row.y, row.width - 32, row.height};
@@ -471,9 +501,7 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
                         last_click_idx = ri;
                     }
                 }
-            } else {
-                int li = n_layers - 1 - (vrow - n_refs);
-                if (li < 0 || li >= n_layers) continue;
+            } else if (li >= 0 && li < n_layers) {
                 Rectangle vis_hit = {row.x, row.y, 16, row.height};
                 Rectangle name_hit = {row.x + 16, row.y, row.width - 16, row.height};
 
@@ -517,7 +545,7 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
             }
 
             // Auto-scroll to keep active layer visible after button ops
-            int active_vrow = n_refs + (n_layers - 1 - c->active_layer);
+            int active_vrow = n_above + (n_layers - 1 - c->active_layer);
             if (active_vrow < list_scroll)
                 list_scroll = active_vrow;
             if (active_vrow >= list_scroll + MAX_VISIBLE_ROWS)
@@ -553,16 +581,37 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
             if (lpress) {
                 int idx = refimage_rename_index();
                 if (idx >= 0) {
-                    int vrow_of_idx = n_refs - 1 - idx;
-                    int row_i = vrow_of_idx - list_scroll;
-                    if (row_i >= 0 && row_i < visible) {
-                        float ry = Y_LIST + row_i * ROW_H;
-                        Rectangle row = {TB_PAD, ry, TB_INNER, ROW_H - 2};
-                        if (!CheckCollisionPointRec(mouse, row)) {
+                    // Find the virtual row for this ref by scanning all virtual rows
+                    int vrow_of_idx = -1;
+                    for (int vr = 0; vr < n_rows; vr++) {
+                        int vri = -1, vli = -1;
+                        if (vr < n_above) {
+                            int k = n_above - 1 - vr;
+                            vri = refimage_index_in_group(true, k);
+                        } else if (vr < n_above + n_layers) {
+                            vli = n_layers - 1 - (vr - n_above);
+                        } else {
+                            int local = vr - n_above - n_layers;
+                            int k = n_below - 1 - local;
+                            vri = refimage_index_in_group(false, k);
+                        }
+                        (void)vli;
+                        if (vri == idx) { vrow_of_idx = vr; break; }
+                    }
+                    if (vrow_of_idx < 0) {
+                        // Ref not found in list — commit immediately
+                        refimage_rename_commit();
+                    } else {
+                        int row_i = vrow_of_idx - list_scroll;
+                        if (row_i >= 0 && row_i < visible) {
+                            float ry = Y_LIST + row_i * ROW_H;
+                            Rectangle row = {TB_PAD, ry, TB_INNER, ROW_H - 2};
+                            if (!CheckCollisionPointRec(mouse, row)) {
+                                refimage_rename_commit();
+                            }
+                        } else {
                             refimage_rename_commit();
                         }
-                    } else {
-                        refimage_rename_commit();
                     }
                 }
             }

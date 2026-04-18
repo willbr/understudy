@@ -35,6 +35,14 @@ void refimage_load_from_db(RefImage *arr, int n);
 
 int  refimage_count(void);
 RefImage *refimage_get(int i);                // mutable; used by db save
+
+// Count of refs with above_strokes == want_above.
+int  refimage_count_in_group(bool want_above);
+
+// Return the array index of the k-th ref in the group (0-indexed, scanned
+// in array order); or -1 if k is out of range. Group is defined by
+// above_strokes flag. k=0 returns the lowest-array-idx ref in the group.
+int  refimage_index_in_group(bool want_above, int k);
 void refimage_set_defaults(float doc_w, float doc_h);
 
 // Set the newly-added (last) image's name. Truncated to 63 chars.
@@ -161,6 +169,24 @@ int refimage_count(void) { return g_refs.count; }
 RefImage *refimage_get(int i) {
     if (i < 0 || i >= g_refs.count) return NULL;
     return &g_refs.items[i];
+}
+
+int refimage_count_in_group(bool want_above) {
+    int n = 0;
+    for (int i = 0; i < g_refs.count; i++) {
+        if (g_refs.items[i].above_strokes == want_above) n++;
+    }
+    return n;
+}
+
+int refimage_index_in_group(bool want_above, int k) {
+    int seen = 0;
+    for (int i = 0; i < g_refs.count; i++) {
+        if (g_refs.items[i].above_strokes != want_above) continue;
+        if (seen == k) return i;
+        seen++;
+    }
+    return -1;
 }
 
 static void ensure_capacity(int need) {
