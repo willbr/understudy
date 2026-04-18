@@ -563,8 +563,15 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
             Rectangle r_up   = {TB_PAD + 2*(bw+4),  btn_y, bw, 20};
             Rectangle r_down = {TB_PAD + 3*(bw+4),  btn_y, bw, 20};
 
-            if (CheckCollisionPointRec(mouse, r_add))
+            if (CheckCollisionPointRec(mouse, r_add)) {
+                int sel = refimage_selected();
+                if (sel >= 0) {
+                    RefImage *rs = refimage_get(sel);
+                    if (rs) rs->locked = true;
+                }
                 canvas_add_layer(c);
+                refimage_select(-1);
+            }
             if (CheckCollisionPointRec(mouse, r_del))
                 canvas_delete_layer(c, c->active_layer);
 

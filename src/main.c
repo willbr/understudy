@@ -253,9 +253,18 @@ int main(void) {
             if (mod && IsKeyPressed(KEY_Z))
                 canvas_undo(&app.canvas);
 
-            // N = new stroke layer (skip while renaming a reference in the list)
-            if (!refimage_rename_active() && IsKeyPressed(KEY_N))
+            // N = new stroke layer (skip while renaming a reference in the list).
+            // If a ref was selected, lock it (so we don't grab it by accident) and
+            // shift focus to the new layer.
+            if (!refimage_rename_active() && IsKeyPressed(KEY_N)) {
+                int sel = refimage_selected();
+                if (sel >= 0) {
+                    RefImage *rs = refimage_get(sel);
+                    if (rs) rs->locked = true;
+                }
                 canvas_add_layer(&app.canvas);
+                refimage_select(-1);
+            }
 
             // H = toggle visibility of the active layer
             if (!refimage_rename_active() && IsKeyPressed(KEY_H))
