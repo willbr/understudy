@@ -380,6 +380,10 @@ bool refimage_update(int canvas_x, int canvas_y,
     float dx, dy;
     screen_to_doc(m.x, m.y, canvas_x, canvas_y, view_x, view_y, zoom, &dx, &dy);
 
+    bool mouse_in_panel =
+        m.x >= canvas_x && m.x < canvas_x + panel_w &&
+        m.y >= canvas_y && m.y < canvas_y + panel_h;
+
     // Cursor hint when hovering handles / body of selection (idle only)
     if (g_refs.selected >= 0 && g_refs.mode == REF_IDLE) {
         RefImage *r = &g_refs.items[g_refs.selected];
@@ -521,7 +525,7 @@ bool refimage_update(int canvas_x, int canvas_y,
         return true;
     }
 
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+    if (mouse_in_panel && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         if (g_refs.selected >= 0) {
             RefImage *r = &g_refs.items[g_refs.selected];
 
