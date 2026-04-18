@@ -6,6 +6,13 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#ifdef _WIN32
+#include <direct.h>
+#define mkdir_p(path) _mkdir(path)
+#else
+#define mkdir_p(path) mkdir(path, 0755)
+#endif
+
 // ── Schema ────────────────────────────────────────────────────────────────────
 
 static const char *SCHEMA_SQL =
@@ -100,15 +107,24 @@ static bool migrate(sqlite3 *db) {
 }
 
 bool db_open(sqlite3 **db) {
+    char dir[512];
+#ifdef _WIN32
+    const char *appdata = getenv("APPDATA");
+    if (!appdata) return false;
+    snprintf(dir, sizeof(dir), "%s\\Understudy", appdata);
+#else
     const char *home = getenv("HOME");
     if (!home) return false;
-
-    char dir[512];
     snprintf(dir, sizeof(dir), "%s/Library/Application Support/Understudy", home);
-    mkdir(dir, 0755);
+#endif
+    mkdir_p(dir);
 
     char path[600];
+#ifdef _WIN32
+    snprintf(path, sizeof(path), "%s\\paintings.db", dir);
+#else
     snprintf(path, sizeof(path), "%s/paintings.db", dir);
+#endif
 
     if (sqlite3_open(path, db) != SQLITE_OK) {
         fprintf(stderr, "db_open: %s\n", sqlite3_errmsg(*db));

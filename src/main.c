@@ -43,7 +43,11 @@ int main(void) {
     SetTargetFPS(TARGET_FPS);
     SetExitKey(KEY_NULL); // Escape is used by modals
 
+#ifdef _WIN32
+    g_font = LoadFontEx("C:\\Windows\\Fonts\\segoeui.ttf", 32, NULL, 0);
+#else
     g_font = LoadFontEx("/System/Library/Fonts/SFNS.ttf", 32, NULL, 0);
+#endif
     SetTextureFilter(g_font.texture, TEXTURE_FILTER_BILINEAR);
 
     canvas_init(&app.canvas);

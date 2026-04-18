@@ -1,3 +1,7 @@
 .claude/settings.local.json
 understudy
+understudy.exe
 *.o
+deps/
+.zig-cache/
+zig-out/

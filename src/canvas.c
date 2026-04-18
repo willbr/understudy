@@ -11,8 +11,8 @@
 #define PAPER_TILE 256
 
 static unsigned int paper_hash(int x, int y) {
-    unsigned int h = (unsigned int)(x * 374761393 + y * 668265263);
-    h = (h ^ (h >> 13)) * 1274126177;
+    unsigned int h = (unsigned int)x * 374761393u + (unsigned int)y * 668265263u;
+    h = (h ^ (h >> 13)) * 1274126177u;
     return h ^ (h >> 16);
 }
 

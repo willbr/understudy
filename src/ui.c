@@ -314,12 +314,22 @@ static void export_dialog_update(UIState *u, Canvas *canvas) {
     if (IsKeyPressed(KEY_ENTER) || ui_button(r_ok, "Export")) {
         if (u->text_len > 0) {
             char path[256];
+#ifdef _WIN32
+            const char *home = getenv("USERPROFILE");
+            bool has_sep = strpbrk(u->text_input, "/\\") != NULL;
+            if (has_sep) {
+                snprintf(path, sizeof(path), "%s", u->text_input);
+            } else {
+                snprintf(path, sizeof(path), "%s\\Desktop\\%s", home ? home : ".", u->text_input);
+            }
+#else
             const char *home = getenv("HOME");
             if (strstr(u->text_input, "/") != NULL) {
                 snprintf(path, sizeof(path), "%s", u->text_input);
             } else {
                 snprintf(path, sizeof(path), "%s/Desktop/%s", home ? home : ".", u->text_input);
             }
+#endif
             int len = (int)strlen(path);
             if (len < 4 || strcmp(path + len - 4, ".png") != 0) {
                 strncat(path, ".png", sizeof(path) - len - 1);

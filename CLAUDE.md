@@ -5,23 +5,21 @@ Guidance for Claude Code (claude.ai/code) working in this repo.
 ## Build & Run
 
 ```bash
-make          # build → ./understudy
-make run      # build + launch
-make clean    # remove objects and binary
+zig build                        # → zig-out/bin/understudy(.exe)
+zig build run                    # build + launch
+zig build -Doptimize=ReleaseFast # optimized build
 ```
 
-Single-file rebuild (faster iteration):
-```bash
-clang -std=c11 -Wall -Wextra -g $(pkg-config --cflags raylib sqlite3) -c src/canvas.c -o src/canvas.o
-```
+Requires Zig 0.15.2+. First build fetches raylib source into `deps/` via `curl` + `tar` (present on macOS and Windows 10+); sqlite is pulled through the Zig package manager.
 
 ## Dependencies
 
-- raylib 5.5 (`brew install raylib`)
-- sqlite3 (`brew install sqlite`)
-- macOS frameworks in Makefile: `IOKit Cocoa OpenGL CoreVideo`
+- raylib 5.5 — vendored into `deps/raylib-5.5/` by `build.zig` on first build (upstream's own `build.zig` targets Zig 0.13/0.14 and breaks on 0.15, so we compile the C sources directly).
+- sqlite3 amalgamation — declared in `build.zig.zon`, fetched by the Zig package manager.
+- macOS frameworks: `IOKit Cocoa OpenGL CoreAudio CoreVideo`
+- Windows system libs: `opengl32 gdi32 winmm shell32 user32`
 
-macOS-only: `clipboard_mac.m` reads PNG images from the system pasteboard via AppKit.
+Platform clipboard: `clipboard_mac.m` (AppKit NSPasteboard) on macOS, `clipboard_win.c` (Win32 + stb_image_write for CF_DIB→PNG) on Windows. `db.c` picks `%APPDATA%\Understudy` on Windows and `~/Library/Application Support/Understudy` on macOS.
 
 ## Window & coordinates
 

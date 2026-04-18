@@ -1,17 +1,18 @@
 # Understudy
 
-A keyboard-driven sketching app for macOS. A big canvas, layered ink strokes, reference images you can drop or paste in, and modifier keys that turn the mouse into a brush, a zoom lens, a size scrubber, or a color picker depending on what you're holding.
+A keyboard-driven sketching app for macOS and Windows. A big canvas, layered ink strokes, reference images you can drop or paste in, and modifier keys that turn the mouse into a brush, a zoom lens, a size scrubber, or a color picker depending on what you're holding.
 
 Built in C with [raylib](https://www.raylib.com/) for rendering and SQLite for storage. One 4096×4096 document, rendered through a paper shader and an ink-compositing shader so strokes feel a little less digital.
 
 ## Build
 
+Requires [Zig 0.15.2+](https://ziglang.org/download/). First build downloads raylib and sqlite sources automatically.
+
 ```bash
-brew install raylib sqlite
-make run
+zig build run
 ```
 
-macOS only — clipboard paste is AppKit, and the Makefile links `Cocoa`, `IOKit`, `OpenGL`, and `CoreVideo`.
+Runs on macOS and Windows. Clipboard paste uses AppKit on macOS and Win32 on Windows; the Zig build links the right OS frameworks/libs per platform.
 
 ## What's in it
 
@@ -32,7 +33,8 @@ src/
   ui.c/.h             modal overlays (save/load/export/crop/resize/help/layer settings)
   db.c/.h             SQLite schema and I/O
   tools.c/.h          active tool + brush state
-  clipboard_mac.m     NSPasteboard → PNG bytes
+  clipboard_mac.m     NSPasteboard → PNG bytes (macOS)
+  clipboard_win.c     Win32 clipboard → PNG bytes (Windows)
   paper.fs, ink.fs    GLSL fragment shaders
 ```
 
