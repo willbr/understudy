@@ -354,7 +354,7 @@ static bool hit_rotation_handle(const RefImage *r,
     rotation_handles_screen(r, canvas_x, canvas_y, view_x, view_y, zoom, rh);
     for (int i = 0; i < 4; i++) {
         float dx = m.x - rh[i].x, dy = m.y - rh[i].y;
-        if (dx * dx + dy * dy <= 12.0f * 12.0f) return true;
+        if (dx * dx + dy * dy <= 14.0f * 14.0f) return true;
     }
     return false;
 }
@@ -362,21 +362,27 @@ static bool hit_rotation_handle(const RefImage *r,
 #define PANEL_W 220.0f
 #define PANEL_H 80.0f
 
-// AABB of the selected image in screen space; fills min/max corners.
+// AABB of the selected image in screen space including corner and rotation
+// handles, so the floating panel can be placed outside them.
 static void selection_aabb(const RefImage *r,
                            int canvas_x, int canvas_y,
                            float view_x, float view_y, float zoom,
                            float *min_x, float *min_y,
                            float *max_x, float *max_y) {
-    Vector2 cor[4];
+    Vector2 cor[4], rh[4];
     corners_screen(r, canvas_x, canvas_y, view_x, view_y, zoom, cor);
+    rotation_handles_screen(r, canvas_x, canvas_y, view_x, view_y, zoom, rh);
     *min_x = cor[0].x; *min_y = cor[0].y;
     *max_x = cor[0].x; *max_y = cor[0].y;
-    for (int i = 1; i < 4; i++) {
+    for (int i = 0; i < 4; i++) {
         if (cor[i].x < *min_x) *min_x = cor[i].x;
         if (cor[i].y < *min_y) *min_y = cor[i].y;
         if (cor[i].x > *max_x) *max_x = cor[i].x;
         if (cor[i].y > *max_y) *max_y = cor[i].y;
+        if (rh[i].x  < *min_x) *min_x = rh[i].x;
+        if (rh[i].y  < *min_y) *min_y = rh[i].y;
+        if (rh[i].x  > *max_x) *max_x = rh[i].x;
+        if (rh[i].y  > *max_y) *max_y = rh[i].y;
     }
 }
 
@@ -591,16 +597,22 @@ void refimage_draw_selection_overlay(int canvas_x, int canvas_y,
     Vector2 cor[4];
     corners_screen(r, canvas_x, canvas_y, view_x, view_y, zoom, cor);
 
-    // Rectangle outline
-    for (int i = 0; i < 4; i++)
-        DrawLineEx(cor[i], cor[(i + 1) % 4], 1.5f, (Color){0, 0, 0, 180});
+    const Color handle_fill   = (Color){255, 210, 60, 255};   // amber
+    const Color handle_stroke = (Color){0, 0, 0, 255};        // black
+    const Color outline_stroke = (Color){0, 0, 0, 220};
 
-    // Corner handles
+    // Rectangle outline: 2px dark line + 1px white inner for contrast
+    for (int i = 0; i < 4; i++) {
+        DrawLineEx(cor[i], cor[(i + 1) % 4], 3.0f, outline_stroke);
+        DrawLineEx(cor[i], cor[(i + 1) % 4], 1.0f, (Color){255, 255, 255, 200});
+    }
+
+    // Corner handles (resize)
     for (int i = 0; i < 4; i++) {
         Rectangle h = {cor[i].x - HANDLE_SIZE, cor[i].y - HANDLE_SIZE,
                        HANDLE_SIZE * 2.0f, HANDLE_SIZE * 2.0f};
-        DrawRectangleRec(h, WHITE);
-        DrawRectangleLinesEx(h, 1.0f, (Color){0, 0, 0, 200});
+        DrawRectangleRec(h, handle_fill);
+        DrawRectangleLinesEx(h, 2.0f, handle_stroke);
     }
 
     // Rotation handles (four circles) with connector lines from each edge midpoint
@@ -613,9 +625,10 @@ void refimage_draw_selection_overlay(int canvas_x, int canvas_y,
         { (cor[3].x + cor[0].x) * 0.5f, (cor[3].y + cor[0].y) * 0.5f }, // left
     };
     for (int i = 0; i < 4; i++) {
-        DrawLineEx(mids[i], rh[i], 1.0f, (Color){0, 0, 0, 180});
-        DrawCircleV(rh[i], 6.0f, WHITE);
-        DrawCircleLinesV(rh[i], 6.0f, (Color){0, 0, 0, 200});
+        DrawLineEx(mids[i], rh[i], 2.0f, outline_stroke);
+        DrawCircleV(rh[i], 9.0f, handle_fill);
+        DrawCircleLinesV(rh[i], 9.0f, handle_stroke);
+        DrawCircleLinesV(rh[i], 8.0f, handle_stroke);  // second ring = thicker look
     }
 }
 
