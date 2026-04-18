@@ -498,6 +498,18 @@ int main(void) {
                                   cpos.x >= 0 && cpos.x < app.canvas.width &&
                                   cpos.y >= 0 && cpos.y < app.canvas.height);
 
+                // Ongoing line drag continues even when the cursor leaves the canvas.
+                if (line_dragging && app.tools.active_tool == TOOL_LINE &&
+                    app.canvas.is_drawing && app.canvas.current.count >= 2) {
+                    Layer *al = &app.canvas.layers[app.canvas.active_layer];
+                    app.canvas.current.points[1].x = cpos.x - al->pan_x;
+                    app.canvas.current.points[1].y = cpos.y - al->pan_y;
+                    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                        canvas_end_stroke(&app.canvas);
+                        line_dragging = false;
+                    }
+                }
+
                 if (on_canvas) {
                     if (app.tools.active_tool == TOOL_PAN_LAYER) {
                         // Pan layer tool: click-drag to shift active layer's pan offset
@@ -523,9 +535,9 @@ int main(void) {
                             canvas_update_minimap(&app.canvas);
                         }
                     } else if (app.tools.active_tool == TOOL_LINE) {
-                        // Line tool: click to set start, drag to preview, release to commit.
-                        // Preview renders via c->current on the active layer (z-correct).
-                        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        // Line tool: click in canvas to set start. Drag update +
+                        // release are handled above so they work off-canvas too.
+                        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !line_dragging) {
                             line_start = cpos;
                             line_dragging = true;
                             Color color = tools_get_draw_color(&app.tools);
@@ -534,17 +546,6 @@ int main(void) {
                                                 TOOL_LINE);
                             canvas_add_point(&app.canvas, line_start);
                             canvas_add_point(&app.canvas, cpos);
-                        }
-                        if (line_dragging && IsMouseButtonDown(MOUSE_BUTTON_LEFT) &&
-                            app.canvas.is_drawing && app.canvas.current.count >= 2) {
-                            // Update the second point to the current cursor (layer-local).
-                            Layer *al = &app.canvas.layers[app.canvas.active_layer];
-                            app.canvas.current.points[1].x = cpos.x - al->pan_x;
-                            app.canvas.current.points[1].y = cpos.y - al->pan_y;
-                        }
-                        if (line_dragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
-                            canvas_end_stroke(&app.canvas);
-                            line_dragging = false;
                         }
                     } else {
                         // Brush/Eraser: freehand drawing
