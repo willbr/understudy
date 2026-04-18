@@ -688,6 +688,8 @@ static void help_draw(void) {
     DrawUI("Eyedropper",       rx, y, 13, LIGHTGRAY); y += gap;
     DrawUI("Cmd/Ctrl+Z",lx, y, 13, (Color){120, 180, 255, 255});
     DrawUI("Undo",             rx, y, 13, LIGHTGRAY); y += gap;
+    DrawUI("N",        lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("New layer",        rx, y, 13, LIGHTGRAY); y += gap;
     DrawUI("Tab",      lx, y, 13, (Color){120, 180, 255, 255});
     DrawUI("Toggle toolbar",   rx, y, 13, LIGHTGRAY); y += gap;
     DrawUI("?",        lx, y, 13, (Color){120, 180, 255, 255});

@@ -253,6 +253,10 @@ int main(void) {
             if (mod && IsKeyPressed(KEY_Z))
                 canvas_undo(&app.canvas);
 
+            // N = new stroke layer (skip while renaming a reference in the list)
+            if (!refimage_rename_active() && IsKeyPressed(KEY_N))
+                canvas_add_layer(&app.canvas);
+
             // Number keys = preset zoom levels (centered on current view)
             {
                 float new_zoom = 0;
