@@ -316,12 +316,13 @@ int main(void) {
                                  !IsKeyDown(KEY_LEFT_SUPER) && !IsKeyDown(KEY_RIGHT_SUPER) &&
                                  !IsKeyDown(KEY_LEFT_CONTROL) && !IsKeyDown(KEY_RIGHT_CONTROL);
 
-            // Space = pan mode; D = brush size scrub; V = zoom scrub; E = eyedropper
+            // Space = pan mode; D = brush size scrub; G = zoom scrub; E = eyedropper
             bool space = IsKeyDown(KEY_SPACE);
             bool sizing = IsKeyDown(KEY_D);
             bool cmd_mod = IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER) ||
                            IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
-            bool zooming = IsKeyDown(KEY_V) && !cmd_mod;
+            (void)cmd_mod;
+            bool zooming = IsKeyDown(KEY_G);
             bool eyedropper = IsKeyDown(KEY_E);
             if (was_sizing && !sizing) {
                 ShowCursor();

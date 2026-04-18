@@ -676,7 +676,7 @@ static void help_draw(void) {
     DrawUI("Pan canvas",       rx, y, 13, LIGHTGRAY); y += gap;
     DrawUI("Scroll",   lx, y, 13, (Color){120, 180, 255, 255});
     DrawUI("Zoom",             rx, y, 13, LIGHTGRAY); y += gap;
-    DrawUI("V + drag", lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("G + drag", lx, y, 13, (Color){120, 180, 255, 255});
     DrawUI("Scrub zoom",       rx, y, 13, LIGHTGRAY); y += gap;
     DrawUI("D + drag", lx, y, 13, (Color){120, 180, 255, 255});
     DrawUI("Scrub brush size", rx, y, 13, LIGHTGRAY); y += gap;
