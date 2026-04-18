@@ -313,7 +313,7 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
                 DrawRectangleRec(row, bg);
                 DrawRectangleLinesEx(row, 1, (Color){70, 70, 70, 255});
 
-                const char *vis = r->visible ? "O" : "-";
+                const char *vis = r->visible ? "O" : "H";
                 DrawUI(vis, (int)row.x + 4, (int)ry + 5, 12,
                        r->visible ? GREEN : (Color){80, 80, 80, 255});
 
@@ -341,7 +341,7 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
                 DrawRectangleRec(row, bg);
                 DrawRectangleLinesEx(row, 1, (Color){70, 70, 70, 255});
 
-                const char *vis = c->layers[li].visible ? "O" : "-";
+                const char *vis = c->layers[li].visible ? "O" : "H";
                 DrawUI(vis, (int)row.x + 4, (int)ry + 5, 12,
                        c->layers[li].visible ? GREEN : (Color){80, 80, 80, 255});
 
