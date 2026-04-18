@@ -288,7 +288,8 @@ void toolbar_draw(const ToolState *t, const Canvas *c) {
                 }
             } else if (li >= 0 && li < n_layers) {
                 // Stroke layer row: top layer first
-                Color bg = (li == c->active_layer)
+                bool layer_is_focused = (li == c->active_layer) && selected_ref < 0;
+                Color bg = layer_is_focused
                            ? (Color){50, 70, 120, 255}
                            : (Color){50, 50, 50, 255};
                 DrawRectangleRec(row, bg);
