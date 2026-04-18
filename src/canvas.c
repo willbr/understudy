@@ -270,11 +270,12 @@ static void redraw_committed(Canvas *c) {
         if (l->stroke_count == 0) continue;
 
         // Render this layer's strokes to strokes_rt (used as scratch)
+        float pvx = c->view_x + l->pan_x * c->zoom;
+        float pvy = c->view_y + l->pan_y * c->zoom;
         BeginTextureMode(c->strokes_rt);
         ClearBackground(BLANK);
         for (int si = 0; si < l->stroke_count; si++)
-            render_stroke_transformed(&l->strokes[si],
-                                      c->view_x, c->view_y, c->zoom);
+            render_stroke_transformed(&l->strokes[si], pvx, pvy, c->zoom);
         EndTextureMode();
 
         // Composite this layer onto committed_rt with alpha blending
@@ -316,8 +317,10 @@ static void update_minimap(Canvas *c) {
     for (int li = 0; li < c->layer_count; li++) {
         if (!c->layers[li].visible) continue;
         Layer *l = &c->layers[li];
+        float mpx = l->pan_x * ms;
+        float mpy = l->pan_y * ms;
         for (int si = 0; si < l->stroke_count; si++)
-            render_stroke_transformed(&l->strokes[si], 0.0f, 0.0f, ms);
+            render_stroke_transformed(&l->strokes[si], mpx, mpy, ms);
     }
     EndTextureMode();
 }
@@ -396,6 +399,11 @@ void canvas_begin_stroke(Canvas *c, Color color, int radius, ToolType tool) {
 void canvas_add_point(Canvas *c, Vector2 p) {
     if (!c->is_drawing) return;
 
+    // Convert from doc coords to layer-local coords (subtract active layer pan)
+    Layer *al = &c->layers[c->active_layer];
+    p.x -= al->pan_x;
+    p.y -= al->pan_y;
+
     Stroke *s = &c->current;
     if (s->count >= s->capacity) {
         int newcap = s->capacity == 0 ? 64 : s->capacity * 2;
@@ -421,15 +429,16 @@ void canvas_add_point(Canvas *c, Vector2 p) {
         for (int li = 0; li < c->layer_count; li++) {
             if (!c->layers[li].visible) continue;
             Layer *l = &c->layers[li];
+            float lpvx = c->view_x + l->pan_x * c->zoom;
+            float lpvy = c->view_y + l->pan_y * c->zoom;
 
             BeginTextureMode(c->strokes_rt);
             ClearBackground(BLANK);
             for (int si = 0; si < l->stroke_count; si++)
-                render_stroke_transformed(&l->strokes[si],
-                                          c->view_x, c->view_y, c->zoom);
+                render_stroke_transformed(&l->strokes[si], lpvx, lpvy, c->zoom);
             // Add current eraser stroke to active layer
             if (li == c->active_layer)
-                render_stroke_transformed(s, c->view_x, c->view_y, c->zoom);
+                render_stroke_transformed(s, lpvx, lpvy, c->zoom);
             EndTextureMode();
 
             BeginTextureMode(c->committed_rt);
@@ -446,11 +455,14 @@ void canvas_add_point(Canvas *c, Vector2 p) {
         EndTextureMode();
     } else {
         // Brush/Line: fast path — copy committed cache, draw current stroke on top
+        // Use active layer's pan offset for the in-progress stroke
+        float apvx = c->view_x + al->pan_x * c->zoom;
+        float apvy = c->view_y + al->pan_y * c->zoom;
         BeginTextureMode(c->strokes_rt);
         ClearBackground(BLANK);
         DrawTexturePro(c->committed_rt.texture, src, dest,
                        (Vector2){0, 0}, 0.0f, WHITE);
-        render_stroke_transformed(s, c->view_x, c->view_y, c->zoom);
+        render_stroke_transformed(s, apvx, apvy, c->zoom);
         EndTextureMode();
     }
 
@@ -556,8 +568,10 @@ bool canvas_export_png(Canvas *c, const char *path, int scale) {
     for (int li = 0; li < c->layer_count; li++) {
         if (!c->layers[li].visible) continue;
         Layer *l = &c->layers[li];
+        float epx = l->pan_x * ss_zoom;
+        float epy = l->pan_y * ss_zoom;
         for (int si = 0; si < l->stroke_count; si++)
-            render_stroke_transformed(&l->strokes[si], 0.0f, 0.0f, ss_zoom);
+            render_stroke_transformed(&l->strokes[si], epx, epy, ss_zoom);
     }
     EndTextureMode();
 
@@ -678,6 +692,10 @@ void canvas_resize_doc(Canvas *c, int new_w, int new_h) {
 void canvas_redraw_for_view(Canvas *c) {
     redraw_all(c);
     render_paper(c);
+}
+
+void canvas_update_minimap(Canvas *c) {
+    update_minimap(c);
 }
 
 void canvas_resize(Canvas *c, int panel_w, int panel_h) {
@@ -856,15 +874,17 @@ void canvas_draw_layer(Canvas *c, int li, int x_offset) {
     int pw = c->strokes_rt.texture.width;
     int ph = c->strokes_rt.texture.height;
 
+    // Apply per-layer pan offset
+    float pvx = c->view_x + l->pan_x * c->zoom;
+    float pvy = c->view_y + l->pan_y * c->zoom;
+
     // Render this layer's strokes into strokes_rt
     BeginTextureMode(c->strokes_rt);
     ClearBackground(BLANK);
     for (int si = 0; si < l->stroke_count; si++)
-        render_stroke_transformed(&l->strokes[si],
-                                  c->view_x, c->view_y, c->zoom);
+        render_stroke_transformed(&l->strokes[si], pvx, pvy, c->zoom);
     if (active_with_inprogress)
-        render_stroke_transformed(&c->current,
-                                  c->view_x, c->view_y, c->zoom);
+        render_stroke_transformed(&c->current, pvx, pvy, c->zoom);
     EndTextureMode();
 
     // Apply ink shader → rt

@@ -33,6 +33,8 @@ typedef struct {
     int      stroke_capacity;
     bool     visible;
     float    z;              // unified z-order; higher = rendered on top
+    float    pan_x;          // per-layer offset in document space
+    float    pan_y;
 } Layer;
 
 typedef struct Canvas {
@@ -82,6 +84,9 @@ void canvas_resize_doc(Canvas *c, int new_w, int new_h);
 
 // Re-render all strokes at the current zoom/pan — call after any view change
 void canvas_redraw_for_view(Canvas *c);
+
+// Update the minimap thumbnail — call after pan offsets change
+void canvas_update_minimap(Canvas *c);
 
 // Recreate the RT at the new panel dimensions and redraw — call on window resize
 void canvas_resize(Canvas *c, int panel_w, int panel_h);

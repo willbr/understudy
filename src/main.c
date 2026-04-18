@@ -492,7 +492,30 @@ int main(void) {
                                   cpos.y >= 0 && cpos.y < app.canvas.height);
 
                 if (on_canvas) {
-                    if (app.tools.active_tool == TOOL_LINE) {
+                    if (app.tools.active_tool == TOOL_PAN_LAYER) {
+                        // Pan layer tool: click-drag to shift active layer's pan offset
+                        static bool panning_layer = false;
+                        static Vector2 pan_start_cpos = {0};
+                        static float pan_start_x = 0, pan_start_y = 0;
+                        Layer *al = &app.canvas.layers[app.canvas.active_layer];
+                        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                            panning_layer = true;
+                            pan_start_cpos = cpos;
+                            pan_start_x = al->pan_x;
+                            pan_start_y = al->pan_y;
+                        }
+                        if (panning_layer && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+                            al->pan_x = pan_start_x + (cpos.x - pan_start_cpos.x);
+                            al->pan_y = pan_start_y + (cpos.y - pan_start_cpos.y);
+                            app.canvas.dirty = true;
+                            canvas_redraw_for_view(&app.canvas);
+                            minimap_t = 0.3f;
+                        }
+                        if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                            panning_layer = false;
+                            canvas_update_minimap(&app.canvas);
+                        }
+                    } else if (app.tools.active_tool == TOOL_LINE) {
                         // Line tool: click to set start, drag to preview, release to commit
                         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                             line_start = cpos;
@@ -513,9 +536,11 @@ int main(void) {
                             for (int li = 0; li < app.canvas.layer_count; li++) {
                                 if (!app.canvas.layers[li].visible) continue;
                                 Layer *l = &app.canvas.layers[li];
+                                float lpvx = app.canvas.view_x + l->pan_x * app.canvas.zoom;
+                                float lpvy = app.canvas.view_y + l->pan_y * app.canvas.zoom;
                                 for (int si = 0; si < l->stroke_count; si++)
                                     render_stroke_transformed(&l->strokes[si],
-                                        app.canvas.view_x, app.canvas.view_y, app.canvas.zoom);
+                                        lpvx, lpvy, app.canvas.zoom);
                             }
                             render_stroke_transformed(&preview,
                                 app.canvas.view_x, app.canvas.view_y, app.canvas.zoom);
