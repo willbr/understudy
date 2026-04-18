@@ -13,6 +13,7 @@ typedef enum UIMode {
     UI_CROP_MODE,
     UI_RESIZE_DIALOG,
     UI_HELP,
+    UI_LAYER_SETTINGS,
 } UIMode;
 
 typedef struct {
@@ -43,10 +44,18 @@ typedef struct {
     bool          resize_lock_aspect;
     int           resize_active_field;  // 0=width, 1=height
     float         resize_aspect;
+    // Layer settings dialog
+    int           layer_settings_idx;
+    char          layer_settings_name[LAYER_NAME_LEN];
+    int           layer_settings_name_len;
+    float         layer_settings_opacity;
+    bool          layer_settings_visible;
 } UIState;
 
 void ui_init(UIState *u);
 void ui_free(UIState *u);
+
+void ui_open_layer_settings(UIState *u, const Canvas *c, int li);
 
 void ui_update(UIState *u, Canvas *canvas, sqlite3 *db, int canvas_x);
 void ui_draw(const UIState *u, const Canvas *c, int canvas_x);

@@ -35,6 +35,7 @@ typedef struct {
     float    z;              // unified z-order; higher = rendered on top
     float    pan_x;          // per-layer offset in document space
     float    pan_y;
+    float    opacity;        // 0..1; 1 = fully opaque
 } Layer;
 
 typedef struct Canvas {

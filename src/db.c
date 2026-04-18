@@ -28,7 +28,8 @@ static const char *SCHEMA_SQL =
     "  visible     INTEGER NOT NULL DEFAULT 1,"
     "  z           REAL    NOT NULL DEFAULT 0,"
     "  pan_x       REAL    NOT NULL DEFAULT 0,"
-    "  pan_y       REAL    NOT NULL DEFAULT 0"
+    "  pan_y       REAL    NOT NULL DEFAULT 0,"
+    "  opacity     REAL    NOT NULL DEFAULT 1"
     ");"
 
     "CREATE TABLE IF NOT EXISTS strokes ("
@@ -64,7 +65,7 @@ static const char *SCHEMA_SQL =
 
 // ── Open/close ────────────────────────────────────────────────────────────────
 
-#define SCHEMA_VERSION 7
+#define SCHEMA_VERSION 8
 
 static bool migrate(sqlite3 *db) {
     sqlite3_stmt *stmt;
@@ -155,8 +156,8 @@ int db_save_painting(sqlite3 *db, const char *name,
 
     // Insert layers and their strokes
     const char *ins_layer =
-        "INSERT INTO layers (painting_id, layer_idx, name, visible, z, pan_x, pan_y) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?);";
+        "INSERT INTO layers (painting_id, layer_idx, name, visible, z, pan_x, pan_y, opacity) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?);";
     const char *ins_stroke =
         "INSERT INTO strokes "
         "(painting_id, layer_id, stroke_idx, color_r, color_g, color_b, color_a, radius, tool, points)"
@@ -184,6 +185,7 @@ int db_save_painting(sqlite3 *db, const char *name,
         sqlite3_bind_double(layer_stmt, 5, l->z);
         sqlite3_bind_double(layer_stmt, 6, l->pan_x);
         sqlite3_bind_double(layer_stmt, 7, l->pan_y);
+        sqlite3_bind_double(layer_stmt, 8, l->opacity);
         if (sqlite3_step(layer_stmt) != SQLITE_DONE) {
             fprintf(stderr, "db_save layer %d: %s\n", li, sqlite3_errmsg(db));
             goto fail;
@@ -292,7 +294,7 @@ bool db_load_painting(sqlite3 *db, int id,
 
     // Fetch layers
     const char *sel_layers =
-        "SELECT id, name, visible, z, pan_x, pan_y FROM layers WHERE painting_id = ? ORDER BY layer_idx ASC;";
+        "SELECT id, name, visible, z, pan_x, pan_y, opacity FROM layers WHERE painting_id = ? ORDER BY layer_idx ASC;";
     if (sqlite3_prepare_v2(db, sel_layers, -1, &stmt, NULL) != SQLITE_OK) return false;
     sqlite3_bind_int(stmt, 1, id);
 
@@ -318,10 +320,13 @@ bool db_load_painting(sqlite3 *db, int id,
         infos[lcount].db_id = sqlite3_column_int(stmt, 0);
         const char *n = (const char *)sqlite3_column_text(stmt, 1);
         snprintf(l->name, LAYER_NAME_LEN, "%s", n ? n : "Layer");
-        l->visible = sqlite3_column_int(stmt, 2) != 0;
-        l->z       = (float)sqlite3_column_double(stmt, 3);
-        l->pan_x   = (float)sqlite3_column_double(stmt, 4);
-        l->pan_y   = (float)sqlite3_column_double(stmt, 5);
+        l->visible  = sqlite3_column_int(stmt, 2) != 0;
+        l->z        = (float)sqlite3_column_double(stmt, 3);
+        l->pan_x    = (float)sqlite3_column_double(stmt, 4);
+        l->pan_y    = (float)sqlite3_column_double(stmt, 5);
+        l->opacity  = (float)sqlite3_column_double(stmt, 6);
+        if (l->opacity <= 0.0f && sqlite3_column_type(stmt, 6) == SQLITE_NULL)
+            l->opacity = 1.0f;  // default for rows without opacity column
         lcount++;
     }
     sqlite3_finalize(stmt);

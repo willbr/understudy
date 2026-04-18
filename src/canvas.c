@@ -70,7 +70,8 @@ static void layer_init(Layer *l, const char *name) {
     memset(l, 0, sizeof(*l));
     snprintf(l->name, LAYER_NAME_LEN, "%s", name);
     l->visible = true;
-    l->z = 0.0f;  // caller assigns next_z
+    l->z       = 0.0f;  // caller assigns next_z
+    l->opacity = 1.0f;
 }
 
 static Layer *active_layer(Canvas *c) {
@@ -562,37 +563,59 @@ bool canvas_export_png(Canvas *c, const char *path, int scale) {
     int ssw = ew * 2, ssh = eh * 2;
     float ss_zoom = (float)(scale * 2);
 
-    RenderTexture2D strokes = LoadRenderTexture(ssw, ssh);
-    BeginTextureMode(strokes);
-    ClearBackground(BLANK);
-    for (int li = 0; li < c->layer_count; li++) {
-        if (!c->layers[li].visible) continue;
-        Layer *l = &c->layers[li];
-        float epx = l->pan_x * ss_zoom;
-        float epy = l->pan_y * ss_zoom;
-        for (int si = 0; si < l->stroke_count; si++)
-            render_stroke_transformed(&l->strokes[si], epx, epy, ss_zoom);
-    }
-    EndTextureMode();
+    // Per-layer compositing so opacity is respected in exports
+    RenderTexture2D layer_rt  = LoadRenderTexture(ssw, ssh);  // scratch per layer
+    RenderTexture2D layer_ink = LoadRenderTexture(ssw, ssh);  // ink-composited layer
+    RenderTexture2D ss_rt     = LoadRenderTexture(ssw, ssh);  // accumulated result
 
-    // Composite with ink shader at supersample resolution
-    RenderTexture2D ss_rt = LoadRenderTexture(ssw, ssh);
-    BeginTextureMode(ss_rt);
-    ClearBackground(WHITE);
     float docSize[2] = {(float)c->width, (float)c->height};
     float viewOff[2] = {0.0f, 0.0f};
     float res[2]     = {(float)ssw, (float)ssh};
-    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "docSize"), docSize, SHADER_UNIFORM_VEC2);
-    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "viewOffset"), viewOff, SHADER_UNIFORM_VEC2);
-    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "zoom"), &ss_zoom, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "resolution"), res, SHADER_UNIFORM_VEC2);
-    BeginShaderMode(c->ink_shader);
-    Rectangle ss_src  = {0, 0, (float)ssw, -(float)ssh};
-    Rectangle ss_dest = {0, 0, (float)ssw, (float)ssh};
-    DrawTexturePro(strokes.texture, ss_src, ss_dest, (Vector2){0, 0}, 0.0f, WHITE);
-    EndShaderMode();
+    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "docSize"),    docSize,   SHADER_UNIFORM_VEC2);
+    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "viewOffset"), viewOff,   SHADER_UNIFORM_VEC2);
+    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "zoom"),       &ss_zoom,  SHADER_UNIFORM_FLOAT);
+    SetShaderValue(c->ink_shader, GetShaderLocation(c->ink_shader, "resolution"), res,       SHADER_UNIFORM_VEC2);
+
+    // Start with a white paper background
+    BeginTextureMode(ss_rt);
+    ClearBackground(WHITE);
     EndTextureMode();
-    UnloadRenderTexture(strokes);
+
+    Rectangle ss_src  = {0, 0, (float)ssw, -(float)ssh};
+    Rectangle ss_dest = {0, 0, (float)ssw,  (float)ssh};
+
+    for (int li = 0; li < c->layer_count; li++) {
+        if (!c->layers[li].visible) continue;
+        Layer *l = &c->layers[li];
+        if (l->stroke_count == 0) continue;
+
+        float epx = l->pan_x * ss_zoom;
+        float epy = l->pan_y * ss_zoom;
+
+        // Render this layer's strokes to scratch RT
+        BeginTextureMode(layer_rt);
+        ClearBackground(BLANK);
+        for (int si = 0; si < l->stroke_count; si++)
+            render_stroke_transformed(&l->strokes[si], epx, epy, ss_zoom);
+        EndTextureMode();
+
+        // Composite strokes through ink shader into layer_ink
+        BeginTextureMode(layer_ink);
+        ClearBackground(BLANK);
+        BeginShaderMode(c->ink_shader);
+        DrawTexturePro(layer_rt.texture, ss_src, ss_dest, (Vector2){0, 0}, 0.0f, WHITE);
+        EndShaderMode();
+        EndTextureMode();
+
+        // Blend layer_ink onto ss_rt with per-layer opacity
+        Color tint = {255, 255, 255, (unsigned char)(l->opacity * 255.0f)};
+        BeginTextureMode(ss_rt);
+        DrawTexturePro(layer_ink.texture, ss_src, ss_dest, (Vector2){0, 0}, 0.0f, tint);
+        EndTextureMode();
+    }
+
+    UnloadRenderTexture(layer_rt);
+    UnloadRenderTexture(layer_ink);
 
     // Downsample 2x with bilinear filtering to target resolution
     SetTextureFilter(ss_rt.texture, TEXTURE_FILTER_BILINEAR);
@@ -890,8 +913,9 @@ void canvas_draw_layer(Canvas *c, int li, int x_offset) {
     // Apply ink shader → rt
     composite_ink(c);
 
-    // Blit rt to screen
+    // Blit rt to screen, applying per-layer opacity
+    Color tint = {255, 255, 255, (unsigned char)(l->opacity * 255.0f)};
     Rectangle src  = {0, 0, (float)pw, -(float)ph};
     Rectangle dest = {(float)x_offset, CANVAS_Y, (float)pw, (float)ph};
-    DrawTexturePro(c->rt.texture, src, dest, (Vector2){0, 0}, 0.0f, WHITE);
+    DrawTexturePro(c->rt.texture, src, dest, (Vector2){0, 0}, 0.0f, tint);
 }

@@ -12,6 +12,8 @@ typedef struct {
     bool wants_export;
     bool wants_crop;
     bool wants_resize;
+    bool wants_layer_settings;
+    int  layer_settings_idx;
 } ToolbarEvents;
 
 void toolbar_draw(const ToolState *t, const Canvas *c);

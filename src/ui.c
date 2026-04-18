@@ -2,6 +2,7 @@
 #include "font.h"
 #include "refimage.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -650,6 +651,150 @@ static void resize_dialog_draw(const UIState *u) {
     ui_button(r_cancel, "Cancel");
 }
 
+// ── Layer Settings Dialog ─────────────────────────────────────────────────────
+
+void ui_open_layer_settings(UIState *u, const Canvas *c, int li) {
+    if (li < 0 || li >= c->layer_count) return;
+    const Layer *l = &c->layers[li];
+    u->layer_settings_idx     = li;
+    snprintf(u->layer_settings_name, sizeof(u->layer_settings_name),
+             "%s", l->name);
+    u->layer_settings_name_len = (int)strlen(u->layer_settings_name);
+    u->layer_settings_opacity  = l->opacity;
+    u->layer_settings_visible  = l->visible;
+    u->mode                    = UI_LAYER_SETTINGS;
+    u->cursor_blink_t          = 0.0f;
+}
+
+static void layer_settings_update(UIState *u, Canvas *canvas) {
+    if (u->layer_settings_idx < 0 ||
+        u->layer_settings_idx >= canvas->layer_count) {
+        u->mode = UI_NONE;
+        return;
+    }
+
+    int dw = 360, dh = 260;
+    int px = (WIN_W - dw) / 2;
+    int py = (WIN_H - dh) / 2;
+
+    Vector2 m   = GetMousePosition();
+    bool lpress = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    bool ldown  = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+
+    Rectangle op_r     = {(float)(px + 16), (float)(py + 134), (float)(dw - 32), 18};
+    Rectangle vis_r    = {(float)(px + 16), (float)(py + 168), 120, 28};
+    Rectangle ok_r     = {(float)(px + dw - 188), (float)(py + dh - 46), 80, 30};
+    Rectangle cancel_r = {(float)(px + dw - 100), (float)(py + dh - 46), 80, 30};
+
+    // Opacity slider drag
+    if (ldown && CheckCollisionPointRec(m, op_r)) {
+        float t = (m.x - op_r.x) / op_r.width;
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        u->layer_settings_opacity = t;
+    }
+
+    // Visibility toggle
+    if (lpress && CheckCollisionPointRec(m, vis_r))
+        u->layer_settings_visible = !u->layer_settings_visible;
+
+    // Name text input
+    int ch = GetCharPressed();
+    while (ch > 0) {
+        if (ch >= 32 && ch < 127 &&
+            u->layer_settings_name_len < (int)sizeof(u->layer_settings_name) - 1) {
+            u->layer_settings_name[u->layer_settings_name_len++] = (char)ch;
+            u->layer_settings_name[u->layer_settings_name_len]   = '\0';
+        }
+        ch = GetCharPressed();
+    }
+    if (IsKeyPressed(KEY_BACKSPACE) && u->layer_settings_name_len > 0) {
+        u->layer_settings_name_len--;
+        u->layer_settings_name[u->layer_settings_name_len] = '\0';
+    }
+
+    // Commit
+    bool commit = false;
+    if (IsKeyPressed(KEY_ENTER))                           commit = true;
+    if (lpress && CheckCollisionPointRec(m, ok_r))         commit = true;
+
+    if (commit) {
+        Layer *l = &canvas->layers[u->layer_settings_idx];
+        if (u->layer_settings_name[0])
+            snprintf(l->name, LAYER_NAME_LEN, "%s", u->layer_settings_name);
+        l->opacity = u->layer_settings_opacity;
+        l->visible = u->layer_settings_visible;
+        canvas->dirty = true;
+        u->mode = UI_NONE;
+        return;
+    }
+
+    // Cancel
+    if (IsKeyPressed(KEY_ESCAPE) ||
+        (lpress && CheckCollisionPointRec(m, cancel_r))) {
+        u->mode = UI_NONE;
+    }
+}
+
+static void layer_settings_draw(const UIState *u, const Canvas *canvas) {
+    if (u->layer_settings_idx < 0 ||
+        u->layer_settings_idx >= canvas->layer_count) return;
+
+    // Dimmed background
+    DrawRectangle(0, 0, WIN_W, WIN_H, (Color){0, 0, 0, 180});
+
+    int dw = 360, dh = 260;
+    int px = (WIN_W - dw) / 2;
+    int py = (WIN_H - dh) / 2;
+    DrawRectangle(px, py, dw, dh, (Color){40, 40, 40, 255});
+    DrawRectangleLinesEx((Rectangle){(float)px, (float)py, (float)dw, (float)dh}, 1, GRAY);
+
+    DrawUI("Layer Settings", px + 16, py + 14, 16, WHITE);
+
+    // Name field
+    DrawUI("Name", px + 16, py + 50, 13, LIGHTGRAY);
+    Rectangle name_r = {(float)(px + 16), (float)(py + 68), (float)(dw - 32), 30};
+    DrawRectangleRec(name_r, (Color){25, 25, 25, 255});
+    DrawRectangleLinesEx(name_r, 1, (Color){100, 160, 255, 255});
+    DrawUI(u->layer_settings_name, (int)name_r.x + 8, (int)name_r.y + 7, 14, WHITE);
+    // Blinking cursor
+    if (fmodf(u->cursor_blink_t, 1.0f) < 0.5f) {
+        int tw = MeasureUI(u->layer_settings_name, 14);
+        DrawUI("_", (int)name_r.x + 8 + tw, (int)name_r.y + 7, 14, WHITE);
+    }
+
+    // Opacity slider
+    char op_label[32];
+    snprintf(op_label, sizeof(op_label), "Opacity: %d%%",
+             (int)(u->layer_settings_opacity * 100.0f + 0.5f));
+    DrawUI(op_label, px + 16, py + 114, 13, LIGHTGRAY);
+    Rectangle op_r = {(float)(px + 16), (float)(py + 134), (float)(dw - 32), 18};
+    DrawRectangleRec(op_r, (Color){50, 50, 50, 255});
+    DrawRectangle((int)op_r.x, (int)op_r.y,
+                  (int)(op_r.width * u->layer_settings_opacity), (int)op_r.height,
+                  (Color){140, 170, 220, 255});
+    DrawRectangleLinesEx(op_r, 1, (Color){120, 120, 120, 255});
+
+    // Visibility toggle
+    Rectangle vis_r = {(float)(px + 16), (float)(py + 168), 120, 28};
+    Color vb = u->layer_settings_visible ? (Color){60, 120, 80, 255}
+                                         : (Color){120, 60, 60, 255};
+    DrawRectangleRec(vis_r, vb);
+    DrawRectangleLinesEx(vis_r, 1, GRAY);
+    DrawUI(u->layer_settings_visible ? "Visible" : "Hidden",
+           (int)vis_r.x + 18, (int)vis_r.y + 7, 13, WHITE);
+
+    // OK / Cancel
+    Rectangle ok_r     = {(float)(px + dw - 188), (float)(py + dh - 46), 80, 30};
+    Rectangle cancel_r = {(float)(px + dw - 100), (float)(py + dh - 46), 80, 30};
+    DrawRectangleRec(ok_r,     (Color){70, 130, 180, 255});
+    DrawRectangleRec(cancel_r, (Color){70, 70, 70, 255});
+    DrawRectangleLinesEx(ok_r,     1, (Color){100, 160, 220, 255});
+    DrawRectangleLinesEx(cancel_r, 1, GRAY);
+    DrawUI("OK",     (int)ok_r.x     + 30, (int)ok_r.y     + 8, 14, WHITE);
+    DrawUI("Cancel", (int)cancel_r.x + 18, (int)cancel_r.y + 8, 14, WHITE);
+}
+
 // ── Help Overlay ──────────────────────────────────────────────────────────────
 
 static void help_update(UIState *u) {
@@ -708,24 +853,26 @@ void ui_update(UIState *u, Canvas *canvas, sqlite3 *db, int canvas_x) {
     u->cursor_blink_t += GetFrameTime();
 
     switch (u->mode) {
-        case UI_SAVE_DIALOG:   save_dialog_update(u, canvas, db); break;
-        case UI_LOAD_LIST:     load_list_update(u, canvas, db);   break;
-        case UI_EXPORT_DIALOG: export_dialog_update(u, canvas);   break;
-        case UI_CROP_MODE:     crop_mode_update(u, canvas, canvas_x); break;
-        case UI_RESIZE_DIALOG: resize_dialog_update(u, canvas);   break;
-        case UI_HELP:          help_update(u); break;
+        case UI_SAVE_DIALOG:    save_dialog_update(u, canvas, db);       break;
+        case UI_LOAD_LIST:      load_list_update(u, canvas, db);         break;
+        case UI_EXPORT_DIALOG:  export_dialog_update(u, canvas);         break;
+        case UI_CROP_MODE:      crop_mode_update(u, canvas, canvas_x);   break;
+        case UI_RESIZE_DIALOG:  resize_dialog_update(u, canvas);         break;
+        case UI_HELP:           help_update(u);                          break;
+        case UI_LAYER_SETTINGS: layer_settings_update(u, canvas);        break;
         default: break;
     }
 }
 
 void ui_draw(const UIState *u, const Canvas *c, int canvas_x) {
     switch (u->mode) {
-        case UI_SAVE_DIALOG:   save_dialog_draw(u); break;
-        case UI_LOAD_LIST:     load_list_draw(u);   break;
-        case UI_EXPORT_DIALOG: export_dialog_draw(u); break;
-        case UI_CROP_MODE:     crop_mode_draw(u, c, canvas_x); break;
-        case UI_RESIZE_DIALOG: resize_dialog_draw(u); break;
-        case UI_HELP:          help_draw(); break;
+        case UI_SAVE_DIALOG:    save_dialog_draw(u);              break;
+        case UI_LOAD_LIST:      load_list_draw(u);                break;
+        case UI_EXPORT_DIALOG:  export_dialog_draw(u);            break;
+        case UI_CROP_MODE:      crop_mode_draw(u, c, canvas_x);   break;
+        case UI_RESIZE_DIALOG:  resize_dialog_draw(u);            break;
+        case UI_HELP:           help_draw();                      break;
+        case UI_LAYER_SETTINGS: layer_settings_draw(u, c);        break;
         default: break;
     }
 }

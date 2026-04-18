@@ -548,8 +548,22 @@ ToolbarEvents toolbar_update(ToolState *t, Canvas *c) {
                     continue;
                 }
                 if (lpress && CheckCollisionPointRec(mouse, name_hit)) {
-                    refimage_select(-1);
-                    canvas_set_active_layer(c, li);
+                    static double last_layer_click_t   = 0;
+                    static int    last_layer_click_idx = -1;
+                    double now = GetTime();
+                    if (last_layer_click_idx == li && now - last_layer_click_t < 0.4) {
+                        refimage_select(-1);
+                        canvas_set_active_layer(c, li);
+                        ev.wants_layer_settings = true;
+                        ev.layer_settings_idx   = li;
+                        last_layer_click_t   = 0;
+                        last_layer_click_idx = -1;
+                    } else {
+                        refimage_select(-1);
+                        canvas_set_active_layer(c, li);
+                        last_layer_click_t   = now;
+                        last_layer_click_idx = li;
+                    }
                 }
             }
         }

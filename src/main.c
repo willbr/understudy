@@ -246,6 +246,8 @@ int main(void) {
                 app.ui.resize_aspect = (float)app.canvas.width / (float)app.canvas.height;
                 app.ui.cursor_blink_t = 0.0f;
             }
+            if (ev.wants_layer_settings)
+                ui_open_layer_settings(&app.ui, &app.canvas, ev.layer_settings_idx);
 
             // Undo: Cmd+Z (macOS) or Ctrl+Z
             bool mod = IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER) ||
