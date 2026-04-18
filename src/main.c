@@ -283,7 +283,8 @@ int main(void) {
             if (color_picker_open && IsKeyReleased(KEY_F)) {
                 // Pick whatever swatch the cursor is hovering
                 Vector2 m = GetMousePosition();
-                float ring_r = 50.0f;
+                float ring_r = 90.0f;
+                float hit_r = 24.0f;
                 static const Color PAL[12] = {
                     BLACK, DARKGRAY, GRAY, WHITE,
                     RED, ORANGE, YELLOW, GREEN,
@@ -294,7 +295,7 @@ int main(void) {
                     float sx = picker_pos.x + cosf(angle) * ring_r;
                     float sy = picker_pos.y + sinf(angle) * ring_r;
                     float dx = m.x - sx, dy = m.y - sy;
-                    if (dx * dx + dy * dy < 15.0f * 15.0f) {
+                    if (dx * dx + dy * dy < hit_r * hit_r) {
                         app.tools.draw_color = PAL[i];
                         app.tools.active_tool = TOOL_BRUSH;
                         break;
@@ -682,11 +683,11 @@ int main(void) {
                     RED, ORANGE, YELLOW, GREEN,
                     SKYBLUE, BLUE, PURPLE, MAROON,
                 };
-                float ring_r = 50.0f;
-                float swatch_r = 14.0f;
+                float ring_r = 90.0f;
+                float swatch_r = 22.0f;
                 // Background disc
-                DrawCircleV(picker_pos, ring_r + swatch_r + 6, (Color){30, 30, 30, 200});
-                DrawCircleLinesV(picker_pos, ring_r + swatch_r + 6, (Color){80, 80, 80, 200});
+                DrawCircleV(picker_pos, ring_r + swatch_r + 10, (Color){30, 30, 30, 210});
+                DrawCircleLinesV(picker_pos, ring_r + swatch_r + 10, (Color){80, 80, 80, 200});
                 // Swatches
                 Vector2 mouse_now = GetMousePosition();
                 for (int i = 0; i < 12; i++) {
@@ -695,13 +696,13 @@ int main(void) {
                     float sy = picker_pos.y + sinf(angle) * ring_r;
                     float dx = mouse_now.x - sx, dy = mouse_now.y - sy;
                     bool hov = (dx * dx + dy * dy < swatch_r * swatch_r);
-                    DrawCircleV((Vector2){sx, sy}, hov ? swatch_r + 2 : swatch_r, PAL[i]);
-                    DrawCircleLinesV((Vector2){sx, sy}, hov ? swatch_r + 2 : swatch_r,
+                    DrawCircleV((Vector2){sx, sy}, hov ? swatch_r + 3 : swatch_r, PAL[i]);
+                    DrawCircleLinesV((Vector2){sx, sy}, hov ? swatch_r + 3 : swatch_r,
                                      hov ? WHITE : (Color){100, 100, 100, 255});
                 }
                 // Current color in center
-                DrawCircleV(picker_pos, 12, app.tools.draw_color);
-                DrawCircleLinesV(picker_pos, 12, (Color){150, 150, 150, 255});
+                DrawCircleV(picker_pos, 20, app.tools.draw_color);
+                DrawCircleLinesV(picker_pos, 20, (Color){150, 150, 150, 255});
             }
 
             // Brush cursor — circle showing brush size
