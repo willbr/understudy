@@ -827,9 +827,9 @@ static void help_draw(void) {
     DrawRectangle(0, 0, WIN_W, WIN_H, Fade(BLACK, 0.7f));
 
     float px = WIN_W / 2.0f - 160;
-    float py = WIN_H / 2.0f - 180;
-    DrawRectangle((int)px, (int)py, 320, 360, (Color){30, 30, 30, 255});
-    DrawRectangleLinesEx((Rectangle){px, py, 320, 360}, 1, GRAY);
+    float py = WIN_H / 2.0f - 191;
+    DrawRectangle((int)px, (int)py, 320, 382, (Color){30, 30, 30, 255});
+    DrawRectangleLinesEx((Rectangle){px, py, 320, 382}, 1, GRAY);
 
     DrawUI("Keyboard Shortcuts", (int)px + 10, (int)py + 10, 16, RAYWHITE);
 
@@ -862,7 +862,9 @@ static void help_draw(void) {
     DrawUI("Toggle ref lock",  rx, y, 13, LIGHTGRAY); y += gap;
     DrawUI("Tab",      lx, y, 13, (Color){120, 180, 255, 255});
     DrawUI("Toggle toolbar",   rx, y, 13, LIGHTGRAY); y += gap;
-    DrawUI("/",        lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("P",        lx, y, 13, (Color){120, 180, 255, 255});
+    DrawUI("Toggle FPS readout", rx, y, 13, LIGHTGRAY); y += gap;
+    DrawUI("/",       lx, y, 13, (Color){120, 180, 255, 255});
     DrawUI("This help",        rx, y, 13, LIGHTGRAY); y += gap + 10;
 
     DrawUI("Click or Esc to close", (int)px + 70, y, 12, (Color){80, 80, 80, 255});

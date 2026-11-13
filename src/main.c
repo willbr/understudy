@@ -15,7 +15,19 @@ extern unsigned char *clipboard_image_png(int *out_len);
 
 Font g_font;
 
-#define TARGET_FPS 60
+// Frame-rate cap. Follows the refresh rate of whichever monitor the window is
+// on; 60 is the fallback when the rate can't be read.
+#define FALLBACK_FPS 60
+static int g_target_fps = 0;
+
+static void sync_target_fps(void) {
+    int hz = GetMonitorRefreshRate(GetCurrentMonitor());
+    if (hz <= 0) hz = FALLBACK_FPS;
+    if (hz != g_target_fps) {
+        g_target_fps = hz;
+        SetTargetFPS(hz);
+    }
+}
 
 typedef struct {
     Canvas    canvas;
@@ -34,13 +46,98 @@ static void update_title(AppState *app) {
     SetWindowTitle(title);
 }
 
+// ── Performance overlay ──────────────────────────────────────────────────────
+// Ring buffer of recent frame times, drawn as two graphs (fps, frame time) in a
+// box at the top-right of the window. Toggled with P.
+#define PERF_SAMPLES 160
+#define PERF_BOX_W   (PERF_SAMPLES + 20)
+#define PERF_GRAPH_H 36
+#define PERF_BOX_H   (2 * (22 + PERF_GRAPH_H) + 14)
+#define PERF_MARGIN  10
+
+static float perf_ms[PERF_SAMPLES];  // frame times in milliseconds
+static int   perf_head  = 0;         // next write slot
+static int   perf_count = 0;
+
+static void perf_sample(float dt_seconds) {
+    perf_ms[perf_head] = dt_seconds * 1000.0f;
+    perf_head = (perf_head + 1) % PERF_SAMPLES;
+    if (perf_count < PERF_SAMPLES) perf_count++;
+}
+
+// Oldest-first access: i = 0 is the oldest stored sample.
+static float perf_at(int i) {
+    int start = (perf_head - perf_count + PERF_SAMPLES) % PERF_SAMPLES;
+    return perf_ms[(start + i) % PERF_SAMPLES];
+}
+
+// One graph: plots the history right-aligned in a w×h area, scaled 0..top,
+// with a faint guide line at `guide`. as_fps plots 1000/ms instead of ms.
+static void perf_graph(int x, int y, int w, int h, bool as_fps,
+                       float top, float guide, Color line) {
+    DrawRectangle(x, y, w, h, (Color){20, 20, 20, 255});
+    int gy = y + h - (int)(guide / top * (float)h);
+    DrawLine(x, gy, x + w, gy, (Color){70, 70, 70, 255});
+
+    Vector2 prev = {0};
+    for (int i = 0; i < perf_count; i++) {
+        float ms = perf_at(i);
+        float v  = as_fps ? (ms > 0.0f ? 1000.0f / ms : 0.0f) : ms;
+        if (v > top) v = top;
+        Vector2 p = {(float)(x + w - perf_count + i),
+                     (float)(y + h) - v / top * (float)h};
+        if (i > 0) DrawLineV(prev, p, line);
+        prev = p;
+    }
+}
+
+static void perf_draw(void) {
+    if (perf_count == 0) return;
+
+    float sum = 0.0f, worst = 0.0f;
+    for (int i = 0; i < perf_count; i++) {
+        float ms = perf_at(i);
+        sum += ms;
+        if (ms > worst) worst = ms;
+    }
+    float avg_ms = sum / (float)perf_count;
+
+    int bx = GetScreenWidth() - PERF_BOX_W - PERF_MARGIN;
+    int by = PERF_MARGIN;
+    DrawRectangle(bx, by, PERF_BOX_W, PERF_BOX_H, (Color){30, 30, 30, 230});
+    DrawRectangleLines(bx, by, PERF_BOX_W, PERF_BOX_H, (Color){80, 80, 80, 255});
+
+    Color text  = {210, 210, 210, 255};
+    Color green = {110, 220, 130, 255};
+    Color amber = {240, 190, 90, 255};
+    int gx = bx + 10, y = by + 8;
+    char buf[48];
+
+    float target    = (float)(g_target_fps > 0 ? g_target_fps : FALLBACK_FPS);
+    float target_ms = 1000.0f / target;
+
+    // FPS: scale to 1.25× the target, guide line at the target
+    snprintf(buf, sizeof(buf), "%d / %d fps", GetFPS(), (int)target);
+    DrawUI(buf, gx, y, 12, text);
+    y += 20;
+    perf_graph(gx, y, PERF_SAMPLES, PERF_GRAPH_H, true, target * 1.25f, target, green);
+    y += PERF_GRAPH_H + 8;
+
+    // Frame time: scale to at least 2 frames' worth, guide line at one frame
+    float top_ms = worst > target_ms * 2.0f ? worst * 1.1f : target_ms * 2.0f;
+    snprintf(buf, sizeof(buf), "%.1f ms  (max %.1f)", avg_ms, worst);
+    DrawUI(buf, gx, y, 12, text);
+    y += 20;
+    perf_graph(gx, y, PERF_SAMPLES, PERF_GRAPH_H, false, top_ms, target_ms, amber);
+}
+
 int main(void) {
     AppState app = {0};
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1280, 800, "Understudy");
     MaximizeWindow();
-    SetTargetFPS(TARGET_FPS);
+    sync_target_fps();
     SetExitKey(KEY_NULL); // Escape is used by modals
 
 #ifdef _WIN32
@@ -67,6 +164,7 @@ int main(void) {
     bool  was_zooming = false;
     Vector2 zoom_anchor = {0};
     bool  toolbar_hidden = false;
+    bool  show_fps = false;  // P toggles the fps readout
     bool  color_picker_open = false;
     Vector2 picker_pos = {0};
     bool  line_dragging = false;
@@ -75,6 +173,7 @@ int main(void) {
     Vector2 zoom_rect_start = {0};  // screen-space
 
     while (!WindowShouldClose()) {
+        sync_target_fps();  // picks up a move to a monitor with a different rate
 
         // ── Update ────────────────────────────────────────────────────────────
         if (IsKeyPressed(KEY_TAB) && app.ui.mode == UI_NONE) {
@@ -270,6 +369,10 @@ int main(void) {
                 canvas_add_layer(&app.canvas);
                 refimage_select(-1);
             }
+
+            // P = toggle the fps readout (performance)
+            if (!refimage_rename_active() && IsKeyPressed(KEY_P))
+                show_fps = !show_fps;
 
             // H = toggle visibility of the active layer
             if (!refimage_rename_active() && IsKeyPressed(KEY_H))
@@ -693,15 +796,23 @@ int main(void) {
 
             // Status line: layer + zoom
             char sc[96];
+            bool has_layer = app.canvas.active_layer < app.canvas.layer_count;
             snprintf(sc, sizeof(sc), "Layer %d/%d  %d strokes  %d%%",
-                     app.canvas.active_layer + 1,
+                     has_layer ? app.canvas.active_layer + 1 : 0,
                      app.canvas.layer_count,
-                     app.canvas.layers[app.canvas.active_layer].stroke_count,
+                     has_layer ? app.canvas.layers[app.canvas.active_layer].stroke_count : 0,
                      (int)(app.canvas.zoom * 100.0f + 0.5f));
-            DrawUI(sc, 10, GetScreenHeight() - 20, 12, (Color){100, 100, 100, 255});
+            DrawUI(sc, 10, GetScreenHeight() - 20, 12, (Color){190, 190, 190, 255});
 
-            if (app.canvas.dirty)
-                DrawUI("*", GetScreenWidth() - 20, 5, 16, YELLOW);
+            // Performance overlay (P) — top-right box with fps + frame time graphs
+            perf_sample(GetFrameTime());
+            if (show_fps) perf_draw();
+
+            if (app.canvas.dirty) {
+                // Sits left of the perf box when that is showing
+                int star_x = GetScreenWidth() - 20 - (show_fps ? PERF_BOX_W + PERF_MARGIN : 0);
+                DrawUI("*", star_x, 5, 16, YELLOW);
+            }
 
             // Minimap — fade in on view change, fade out after 2.5 s
             minimap_t -= GetFrameTime();
