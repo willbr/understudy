@@ -61,6 +61,7 @@ typedef struct Canvas {
     bool    live_valid;
     int     live_layer;          // layer index live_rt was built for
     int     live_segs;           // segments of `current` already in live_rt
+    double  live_spent;          // seconds spent rendering those segments
     // Background re-rasterization of one layer at a new view, a few ms per
     // frame; swapped in as that layer's cache when complete.
     RenderTexture2D job_rt;

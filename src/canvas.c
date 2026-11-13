@@ -435,6 +435,21 @@ static void update_minimap(Canvas *c) {
     EndTextureMode();
 }
 
+// (Re)allocate live_rt and job_rt at the panel size up front, so the first
+// stroke or view change doesn't pay for the allocation mid-interaction.
+static void alloc_work_rts(Canvas *c, int w, int h) {
+    if (c->live_w > 0) UnloadRenderTexture(c->live_rt);
+    if (c->job_w > 0)  UnloadRenderTexture(c->job_rt);
+    c->live_rt = LoadRenderTexture(w, h);
+    c->job_rt  = LoadRenderTexture(w, h);
+    // Either may be swapped in as a layer cache, which is bilinear.
+    SetTextureFilter(c->live_rt.texture, TEXTURE_FILTER_BILINEAR);
+    SetTextureFilter(c->job_rt.texture, TEXTURE_FILTER_BILINEAR);
+    c->live_w = c->job_w = w;
+    c->live_h = c->job_h = h;
+    live_invalidate(c);
+}
+
 static void reset_view(Canvas *c) {
     int pw = c->rt.texture.width;
     int ph = c->rt.texture.height;
@@ -465,11 +480,11 @@ void canvas_init(Canvas *c) {
     c->strokes_rt   = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
     c->paper_rt     = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
     c->minimap_rt   = LoadRenderTexture(MINIMAP_SIZE, MINIMAP_SIZE);
-    c->live_w = c->live_h = 0;   // live_rt is allocated on first use
+    c->live_w = c->live_h = 0;
     c->live_layer = -1;
-    c->job_w = c->job_h = 0;     // job_rt likewise
+    c->job_w = c->job_h = 0;
     c->job_layer = -1;
-    live_invalidate(c);
+    alloc_work_rts(c, CANVAS_WIDTH, CANVAS_HEIGHT);
 
     memset(c->layers, 0, sizeof(c->layers));
     c->layer_count  = 1;
@@ -572,6 +587,11 @@ void canvas_end_stroke(Canvas *c) {
     bool cache_fresh = l->cache_w == pw && l->cache_h == ph && !l->cache_dirty &&
                        l->cache_vx == pvx && l->cache_vy == pvy &&
                        l->cache_zoom == c->zoom;
+    // Folding also has to keep cache_cost (what a full re-rasterization of
+    // this layer would take) up to date, or a layer built up stroke by stroke
+    // would still look "cheap" and get rasterized in one go — a stall — on
+    // the first view change.
+    double t0 = GetTime();
     if (!cache_fresh) {
         l->cache_dirty = true;
     } else if (c->live_valid && c->live_layer == c->active_layer &&
@@ -585,11 +605,13 @@ void canvas_end_stroke(Canvas *c) {
         RenderTexture2D tmp = l->cache_rt;
         l->cache_rt = c->live_rt;
         c->live_rt  = tmp;
+        l->cache_cost += c->live_spent + (GetTime() - t0);
     } else {
         BeginTextureMode(l->cache_rt);
         render_stroke_range(s, pvx, pvy, c->zoom, 0, s->count - 1,
                             (float)pw, (float)ph);
         EndTextureMode();
+        l->cache_cost += GetTime() - t0;
     }
     live_invalidate(c);
 
@@ -843,6 +865,7 @@ void canvas_resize(Canvas *c, int panel_w, int panel_h) {
     c->rt           = LoadRenderTexture(panel_w, panel_h);
     c->strokes_rt   = LoadRenderTexture(panel_w, panel_h);
     c->paper_rt     = LoadRenderTexture(panel_w, panel_h);
+    alloc_work_rts(c, panel_w, panel_h);
     render_paper(c);
 }
 
@@ -1123,14 +1146,17 @@ void canvas_draw_layer(Canvas *c, int li, int x_offset) {
             c->live_valid = true;
             c->live_layer = li;
             c->live_segs  = 0;
+            c->live_spent = 0.0;
         }
         settled = c->current.count - 3;
         if (settled > c->live_segs) {
+            double t0 = GetTime();
             BeginTextureMode(c->live_rt);
             render_stroke_range(&c->current, pvx, pvy, c->zoom,
                                 c->live_segs, settled, (float)pw, (float)ph);
             EndTextureMode();
             c->live_segs = settled;
+            c->live_spent += GetTime() - t0;
         }
     }
 
