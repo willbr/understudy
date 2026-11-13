@@ -62,6 +62,9 @@ static void layer_free(Layer *l) {
         stroke_free_data(&l->strokes[i]);
     free(l->strokes);
     if (l->cache_w > 0) UnloadRenderTexture(l->cache_rt);
+    if (l->overview_w > 0) UnloadRenderTexture(l->overview_rt);
+    l->overview_w = 0;
+    l->overview_valid = false;
     l->strokes         = NULL;
     l->stroke_count    = 0;
     l->stroke_capacity = 0;
@@ -83,6 +86,9 @@ static void layer_init(Layer *l, const char *name) {
 #define JOB_BUDGET_S               0.002   // background rasterization time per frame
 #define JOB_SEG_CHUNK              16      // stroke segments rendered between budget checks
 #define JOB_ABANDON_S              0.25    // job not advanced this long = its layer is no longer drawn
+#define JOB_CACHE                  0       // job_kind: re-rasterize a layer cache at a new view
+#define JOB_OVERVIEW               1       // job_kind: rebuild a layer's whole-document overview
+#define OVERVIEW_SIZE              1024    // per-layer overview texture (square, covers the document)
 
 static void invalidate_all_layer_caches(Canvas *c) {
     for (int i = 0; i < c->layer_count; i++)
@@ -357,29 +363,53 @@ static void job_cancel(Canvas *c) {
     c->job_active = false;
 }
 
-// Which layer should get the job next: the visible, expensive layer whose
-// cache is out of date for the current view and has been so the longest.
-static int job_candidate(const Canvas *c) {
+// Scale from layer-local document coordinates to overview texels.
+static float overview_scale(const Canvas *c) {
+    int max_dim = c->width > c->height ? c->width : c->height;
+    return (float)OVERVIEW_SIZE / (float)max_dim;
+}
+
+// Mipmaps let the overview be minified cleanly when zoomed far out.
+static void overview_finish(Layer *l) {
+    GenTextureMipmaps(&l->overview_rt.texture);
+    SetTextureFilter(l->overview_rt.texture, TEXTURE_FILTER_TRILINEAR);
+    l->overview_valid = true;
+}
+
+static void overview_alloc(Layer *l) {
+    if (l->overview_w > 0) return;
+    l->overview_rt = LoadRenderTexture(OVERVIEW_SIZE, OVERVIEW_SIZE);
+    l->overview_w  = OVERVIEW_SIZE;
+    l->overview_valid = false;
+}
+
+// Which layer should get the job next, and for what. Sharp caches come first:
+// the visible, expensive layer whose cache is out of date for the current
+// view and has been so the longest. Failing that, an expensive layer that has
+// no up-to-date overview.
+static int job_candidate(const Canvas *c, int *kind) {
     int pw = c->strokes_rt.texture.width, ph = c->strokes_rt.texture.height;
-    int best = -1;
+    int best = -1, best_ov = -1;
     for (int i = 0; i < c->layer_count; i++) {
         const Layer *l = &c->layers[i];
         if (!l->visible || l->stroke_count == 0 || l->cache_dirty) continue;
         if (l->cache_w != pw || l->cache_h != ph) continue;
         if (l->cache_cost < LAYER_CHEAP_RASTER_S) continue;
+        if (!l->overview_valid && best_ov < 0) best_ov = i;
         float pvx = c->view_x + l->pan_x * c->zoom;
         float pvy = c->view_y + l->pan_y * c->zoom;
         if (l->cache_vx == pvx && l->cache_vy == pvy && l->cache_zoom == c->zoom) continue;
         if (best < 0 || l->cache_time < c->layers[best].cache_time) best = i;
     }
-    return best;
+    *kind = best >= 0 ? JOB_CACHE : JOB_OVERVIEW;
+    return best >= 0 ? best : best_ov;
 }
 
 // Spend up to JOB_BUDGET_S rendering the next strokes of the job's layer into
-// job_rt. Returns true when the layer is fully rendered.
+// the job's target. Returns true when the layer is fully rendered.
 static bool job_advance(Canvas *c, Layer *l, float clip_w, float clip_h) {
     double t0 = GetTime();
-    BeginTextureMode(c->job_rt);
+    BeginTextureMode(c->job_kind == JOB_OVERVIEW ? c->job_ov_rt : c->job_rt);
     if (!c->job_started) {
         ClearBackground(BLANK);
         c->job_started = true;
@@ -485,6 +515,8 @@ void canvas_init(Canvas *c) {
     c->job_w = c->job_h = 0;
     c->job_layer = -1;
     alloc_work_rts(c, CANVAS_WIDTH, CANVAS_HEIGHT);
+    c->job_ov_rt = LoadRenderTexture(OVERVIEW_SIZE, OVERVIEW_SIZE);
+    c->job_kind  = JOB_CACHE;
 
     memset(c->layers, 0, sizeof(c->layers));
     c->layer_count  = 1;
@@ -512,6 +544,7 @@ void canvas_free(Canvas *c) {
     UnloadRenderTexture(c->rt);
     if (c->live_w > 0) UnloadRenderTexture(c->live_rt);
     if (c->job_w > 0)  UnloadRenderTexture(c->job_rt);
+    UnloadRenderTexture(c->job_ov_rt);
     for (int i = 0; i < c->layer_count; i++)
         layer_free(&c->layers[i]);
     stroke_free_data(&c->current);
@@ -519,7 +552,8 @@ void canvas_free(Canvas *c) {
 
 void canvas_begin_stroke(Canvas *c, Color color, int radius, ToolType tool) {
     stroke_free_data(&c->current);
-    live_invalidate(c);
+    c->live_valid = false;
+    c->live_segs  = 0;
     c->current.color  = color;
     c->current.radius = radius;
     c->current.tool   = tool;
@@ -613,7 +647,28 @@ void canvas_end_stroke(Canvas *c) {
         EndTextureMode();
         l->cache_cost += GetTime() - t0;
     }
-    live_invalidate(c);
+    c->live_valid = false;
+    c->live_segs  = 0;
+
+    // Same idea for the overview: stamp the new stroke onto it. A layer's
+    // first stroke creates it; an overview that is out of date is left for
+    // the background job, which picks this stroke up as it rebuilds.
+    if (cache_fresh) {
+        if (l->overview_w == 0 && l->stroke_count == 1) {
+            overview_alloc(l);
+            BeginTextureMode(l->overview_rt);
+            ClearBackground(BLANK);
+            EndTextureMode();
+            l->overview_valid = true;
+        }
+        if (l->overview_valid) {
+            BeginTextureMode(l->overview_rt);
+            render_stroke_range(s, 0.0f, 0.0f, overview_scale(c), 0, s->count - 1,
+                                (float)OVERVIEW_SIZE, (float)OVERVIEW_SIZE);
+            EndTextureMode();
+            overview_finish(l);
+        }
+    }
 
     if (brush_fast_path) {
         // Stamp only the new stroke onto the minimap.
@@ -1036,6 +1091,10 @@ void canvas_draw_layer(Canvas *c, int li, int x_offset) {
     float pvx = c->view_x + l->pan_x * c->zoom;
     float pvy = c->view_y + l->pan_y * c->zoom;
 
+    // Dirty because the strokes changed (as opposed to the cache merely being
+    // reallocated just below).
+    bool content_dirty = l->cache_dirty;
+
     // Ensure the per-layer cache RT matches the current panel size.
     if (l->cache_w != pw || l->cache_h != ph) {
         if (l->cache_w > 0) UnloadRenderTexture(l->cache_rt);
@@ -1067,10 +1126,23 @@ void canvas_draw_layer(Canvas *c, int li, int x_offset) {
     // whose view changed instead shows its stale cache (translated/scaled
     // below) while a background job re-rasterizes it a few ms per frame into
     // job_rt, which is swapped in when complete.
+    //
+    // Each expensive layer also keeps a low-resolution overview of the whole
+    // document (overview_rt). The stale cache only covers the old viewport, so
+    // after zooming out or panning the overview fills in everything around it
+    // until the sharp raster arrives. Overviews are kept current by stamping
+    // each new stroke onto them (canvas_end_stroke) and are rebuilt by the
+    // same background job after any other content change.
+    if (content_dirty) {
+        l->overview_valid = false;               // content changed some other way
+        if (c->job_layer == li) job_cancel(c);   // job was rendering old content
+    }
     bool expensive = l->cache_cost >= LAYER_CHEAP_RASTER_S;
     bool rasterize = l->cache_dirty ||
                      (stale && (active_with_inprogress || !expensive));
-    if (!rasterize && stale) {
+    bool want_cache_job    = !rasterize && stale;
+    bool want_overview_job = !rasterize && expensive && !l->overview_valid;
+    if (want_cache_job || want_overview_job) {
         if (c->job_w != pw || c->job_h != ph) {
             if (c->job_w > 0) UnloadRenderTexture(c->job_rt);
             c->job_rt = LoadRenderTexture(pw, ph);
@@ -1081,33 +1153,59 @@ void canvas_draw_layer(Canvas *c, int li, int x_offset) {
         }
         // A job whose layer stopped being drawn (hidden) is abandoned.
         bool busy = c->job_active && (now - c->job_touch) < JOB_ABANDON_S;
+        // Sharp caches matter more than overviews: a waiting cache job
+        // preempts an overview rebuild (which simply restarts later).
+        if (busy && c->job_kind == JOB_OVERVIEW && want_cache_job) busy = false;
         bool mine = busy && c->job_layer == li;
-        if (mine && !moving &&
-            (c->job_vx != pvx || c->job_vy != pvy || c->job_zoom != c->zoom))
-            mine = false, busy = false;   // view came to rest elsewhere: retarget
-        if (!busy && job_candidate(c) == li) {
+        // A cache job aimed at a view we have since left, now that the view
+        // has come to rest: retarget it at the final view.
+        if (mine && c->job_kind == JOB_CACHE && !moving &&
+            (c->job_vx != pvx || c->job_vy != pvy || c->job_zoom != c->zoom)) {
+            mine = false;
+            busy = false;
+        }
+        int kind = JOB_CACHE;
+        if (!busy && job_candidate(c, &kind) == li) {
             c->job_active  = true;
             c->job_started = false;
+            c->job_kind    = kind;
             c->job_layer   = li;
             c->job_stroke  = 0;
             c->job_seg     = 0;
-            c->job_vx = pvx; c->job_vy = pvy; c->job_zoom = c->zoom;
             c->job_spent   = 0.0;
+            if (kind == JOB_CACHE) {
+                c->job_vx = pvx; c->job_vy = pvy; c->job_zoom = c->zoom;
+            } else {
+                c->job_vx = 0.0f; c->job_vy = 0.0f; c->job_zoom = overview_scale(c);
+            }
             mine = true;
         }
-        if (mine && job_advance(c, l, (float)pw, (float)ph)) {
-            RenderTexture2D tmp = l->cache_rt;
-            l->cache_rt = c->job_rt;
-            c->job_rt   = tmp;
-            l->cache_vx = c->job_vx; l->cache_vy = c->job_vy; l->cache_zoom = c->job_zoom;
-            l->cache_time = GetTime();
-            l->cache_cost = c->job_spent;
-            job_cancel(c);
-            stale = l->cache_vx != pvx || l->cache_vy != pvy || l->cache_zoom != c->zoom;
+        if (mine && c->job_kind == JOB_CACHE) {
+            if (job_advance(c, l, (float)pw, (float)ph)) {
+                RenderTexture2D tmp = l->cache_rt;
+                l->cache_rt = c->job_rt;
+                c->job_rt   = tmp;
+                l->cache_vx = c->job_vx; l->cache_vy = c->job_vy; l->cache_zoom = c->job_zoom;
+                l->cache_time = GetTime();
+                l->cache_cost = c->job_spent;
+                job_cancel(c);
+                stale = l->cache_vx != pvx || l->cache_vy != pvy || l->cache_zoom != c->zoom;
+            }
+        } else if (mine) {
+            if (job_advance(c, l, (float)OVERVIEW_SIZE, (float)OVERVIEW_SIZE)) {
+                overview_alloc(l);
+                RenderTexture2D tmp = l->overview_rt;
+                l->overview_rt = c->job_ov_rt;
+                c->job_ov_rt   = tmp;
+                overview_finish(l);
+                job_cancel(c);
+            }
         }
     }
     if (rasterize) {
-        if (c->job_layer == li) job_cancel(c);
+        // A cache job for this layer is now redundant.
+        if (c->job_active && c->job_layer == li && c->job_kind == JOB_CACHE)
+            job_cancel(c);
         double t0 = GetTime();
         BeginTextureMode(l->cache_rt);
         ClearBackground(BLANK);
@@ -1179,8 +1277,30 @@ void canvas_draw_layer(Canvas *c, int li, int x_offset) {
             cache_dest = (Rectangle){pvx - l->cache_vx * s, pvy - l->cache_vy * s,
                                      (float)pw * s, (float)ph * s};
         }
-        DrawTexturePro(l->cache_rt.texture, cache_src, cache_dest,
-                       (Vector2){0, 0}, 0.0f, WHITE);
+        if (stale && l->overview_valid) {
+            // Whole-document overview first, so nothing is blank...
+            float ms   = overview_scale(c);
+            float span = (float)OVERVIEW_SIZE / ms * c->zoom;
+            DrawTexturePro(l->overview_rt.texture,
+                           (Rectangle){0, 0, OVERVIEW_SIZE, -(float)OVERVIEW_SIZE},
+                           (Rectangle){pvx, pvy, span, span},
+                           (Vector2){0, 0}, 0.0f, WHITE);
+            // ...then the stale cache replaces it (no blending) over the area
+            // it covers — unless it was rasterized more zoomed-out than the
+            // overview, in which case the overview is the sharper of the two.
+            if (l->cache_zoom >= ms) {
+                rlDrawRenderBatchActive();
+                rlSetBlendFactors(0x1, 0x0, 0x8006); // GL_ONE, GL_ZERO, GL_FUNC_ADD
+                rlSetBlendMode(RL_BLEND_CUSTOM);
+                DrawTexturePro(l->cache_rt.texture, cache_src, cache_dest,
+                               (Vector2){0, 0}, 0.0f, WHITE);
+                rlDrawRenderBatchActive();
+                rlSetBlendMode(RL_BLEND_ALPHA);
+            }
+        } else {
+            DrawTexturePro(l->cache_rt.texture, cache_src, cache_dest,
+                           (Vector2){0, 0}, 0.0f, WHITE);
+        }
         if (active_with_inprogress)
             render_stroke_transformed(&c->current, pvx, pvy, c->zoom);
     }

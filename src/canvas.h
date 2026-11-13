@@ -47,7 +47,12 @@ typedef struct {
     float    seen_vx, seen_vy, seen_zoom;     // view at the previous draw (detects pan/zoom in progress)
     double   move_time;      // GetTime() when the view last changed
     double   cache_time;     // GetTime() of the last rasterization
-    double   cache_cost;     // seconds the last rasterization took
+    double   cache_cost;     // seconds a full rasterization of this layer takes
+    // Low-resolution raster of the whole document for this layer, shown
+    // around the stale cache after a view change until the sharp one is ready.
+    RenderTexture2D overview_rt;
+    int      overview_w;     // 0 = unallocated
+    bool     overview_valid; // matches the layer's current strokes
 } Layer;
 
 typedef struct Canvas {
@@ -62,10 +67,13 @@ typedef struct Canvas {
     int     live_layer;          // layer index live_rt was built for
     int     live_segs;           // segments of `current` already in live_rt
     double  live_spent;          // seconds spent rendering those segments
-    // Background re-rasterization of one layer at a new view, a few ms per
-    // frame; swapped in as that layer's cache when complete.
+    // Background rasterization of one layer, a few ms per frame: either its
+    // cache at a new view (into job_rt) or its overview (into job_ov_rt).
+    // The result is swapped into the layer when complete.
     RenderTexture2D job_rt;
-    int     job_w, job_h;        // 0 = unallocated
+    RenderTexture2D job_ov_rt;
+    int     job_w, job_h;        // job_rt size; 0 = unallocated
+    int     job_kind;            // JOB_CACHE or JOB_OVERVIEW
     bool    job_active;
     bool    job_started;         // job_rt has been cleared for this job
     int     job_layer;

@@ -9,12 +9,12 @@ Always commit your changes when a piece of work is done — don't leave them unc
 ## Build & Run
 
 ```bash
-zig build                        # → zig-out/bin/understudy(.exe)
+zig build                        # → zig-out/bin/understudy(.exe), ReleaseFast by default
 zig build run                    # build + launch
-zig build -Doptimize=ReleaseFast # optimized build
+zig build -Doptimize=Debug       # debug build (stroke rasterization is several times slower)
 ```
 
-Requires Zig 0.15.2+. First build fetches raylib source into `deps/` via `curl` + `tar` (present on macOS and Windows 10+); sqlite is pulled through the Zig package manager.
+Requires Zig 0.15.2+ (0.16 also works). First build fetches raylib source into `deps/` via `curl` + `tar` (present on macOS and Windows 10+); sqlite is pulled through the Zig package manager.
 
 ## Dependencies
 
@@ -67,6 +67,7 @@ Strokes are arrays of `Vector2` sample points plus color, radius, tool. Each `La
 
 Render targets:
 - `Layer.cache_rt` — per-layer raster of that layer's committed strokes, tagged with the view it was rasterized at. `canvas_draw_layer()` re-rasterizes it synchronously on content change (`cache_dirty`). After a view change, an expensive layer shows its stale cache translated/scaled while a background job re-rasterizes it into `job_rt` a couple of ms per frame, then swaps it in — never a whole rasterization in one frame.
+- `Layer.overview_rt` — 1024² mipmapped raster of the whole document for that layer. Drawn under the stale cache after a view change so areas the cache doesn't cover aren't blank. New strokes are stamped onto it in `canvas_end_stroke()`; any other content change invalidates it and the background job rebuilds it.
 - `live_rt` — active layer's cache + the settled part of the in-progress stroke, so each frame renders only newly added segments. Swapped in as the layer's cache on stroke end.
 - `strokes_rt` — scratch: one layer's strokes for the current frame, fed to `ink.fs`
 - `paper_rt` — paper texture at the current view (from `paper.fs`)
