@@ -17,10 +17,7 @@ pub fn build(b: *std.Build) void {
     // Upstream raylib 5.5 has a build.zig that uses APIs removed in Zig 0.15
     // (ArrayList.init, defineCMacro). Bypass it entirely — fetch the source
     // tarball ourselves and compile the C files directly.
-    ensureRaylib(b, raylib_header) catch |err| {
-        std.debug.print("failed to fetch raylib: {}\n", .{err});
-        std.process.exit(1);
-    };
+    ensureRaylib(b, raylib_header);
 
     const sqlite_dep = b.dependency("sqlite", .{});
 
@@ -177,24 +174,39 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 }
 
-fn ensureRaylib(b: *std.Build, marker: []const u8) !void {
-    std.fs.accessAbsolute(marker, .{}) catch {
-        std.fs.cwd().makePath("deps") catch {};
+// Zig 0.16 moved the filesystem API from std.fs to std.Io (every call takes an
+// Io handle). These two helpers pick whichever exists so the script builds on
+// both 0.15 and 0.16.
+const old_fs = @hasDecl(std.fs, "accessAbsolute");
 
-        const tarball = "deps/raylib-" ++ RAYLIB_VERSION ++ ".tar.gz";
-
-        std.debug.print("fetching raylib {s}\n", .{RAYLIB_VERSION});
-
-        try runCmd(b, &.{ "curl", "-L", "--fail", "--silent", "--show-error", "-o", tarball, RAYLIB_URL });
-        try runCmd(b, &.{ "tar", "-xzf", tarball, "-C", "deps" });
-        std.fs.cwd().deleteFile(tarball) catch {};
-    };
+fn fileExists(b: *std.Build, abs_path: []const u8) bool {
+    if (old_fs) {
+        std.fs.accessAbsolute(abs_path, .{}) catch return false;
+    } else {
+        std.Io.Dir.accessAbsolute(b.graph.io, abs_path, .{}) catch return false;
+    }
+    return true;
 }
 
-fn runCmd(b: *std.Build, argv: []const []const u8) !void {
-    var child = std.process.Child.init(argv, b.allocator);
-    child.stderr_behavior = .Inherit;
-    child.stdout_behavior = .Inherit;
-    const term = try child.spawnAndWait();
-    if (term != .Exited or term.Exited != 0) return error.CommandFailed;
+fn deleteFile(b: *std.Build, abs_path: []const u8) void {
+    if (old_fs) {
+        std.fs.deleteFileAbsolute(abs_path) catch {};
+    } else {
+        std.Io.Dir.deleteFileAbsolute(b.graph.io, abs_path) catch {};
+    }
+}
+
+fn ensureRaylib(b: *std.Build, marker: []const u8) void {
+    if (fileExists(b, marker)) return;
+
+    const deps = b.pathFromRoot("deps");
+    const tarball = b.pathJoin(&.{ deps, "raylib-" ++ RAYLIB_VERSION ++ ".tar.gz" });
+
+    std.debug.print("fetching raylib {s}\n", .{RAYLIB_VERSION});
+
+    // b.run exits the build with the command's stderr if it fails.
+    // curl's --create-dirs makes deps/ for us.
+    _ = b.run(&.{ "curl", "-L", "--fail", "--silent", "--show-error", "--create-dirs", "-o", tarball, RAYLIB_URL });
+    _ = b.run(&.{ "tar", "-xzf", tarball, "-C", deps });
+    deleteFile(b, tarball);
 }
