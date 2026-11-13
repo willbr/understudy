@@ -61,9 +61,10 @@ main loop
 
 Strokes are arrays of `Vector2` sample points plus color, radius, tool. Each `Layer` owns its own stroke array and a per-layer `pan_x/pan_y`, `opacity`, `visible`, and `z` (unified z-order shared with ref images).
 
-Render targets live on the `Canvas`:
-- `committed_rt` — cached composite of all finished layers at the current view transform
-- `strokes_rt` — in-progress stroke for the active layer, fed to `ink.fs`
+Render targets:
+- `Layer.cache_rt` — per-layer raster of that layer's committed strokes, tagged with the view it was rasterized at. `canvas_draw_layer()` re-rasterizes it on content change (`cache_dirty`) or once the view comes to rest; while a pan/zoom is in progress an expensive layer's stale cache is translated/scaled instead.
+- `live_rt` — active layer's cache + the settled part of the in-progress stroke, so each frame renders only newly added segments. Swapped in as the layer's cache on stroke end.
+- `strokes_rt` — scratch: one layer's strokes for the current frame, fed to `ink.fs`
 - `paper_rt` — paper texture at the current view (from `paper.fs`)
 - `minimap_rt` — thumbnail of the whole document
 - `rt` — final panel-sized output
@@ -71,12 +72,12 @@ Render targets live on the `Canvas`:
 Stroke lifecycle:
 ```
 IsMouseButtonPressed  → canvas_begin_stroke()
-IsMouseButtonDown     → canvas_add_point()    — renders a segment incrementally
-IsMouseButtonReleased → canvas_end_stroke()   — commits to active layer
+IsMouseButtonDown     → canvas_add_point()    — records a sample (drawn by canvas_draw_layer)
+IsMouseButtonReleased → canvas_end_stroke()   — commits to active layer, folds into its cache
 Cmd/Ctrl+Z            → canvas_undo()         — pops last stroke, replays
 ```
 
-After any view change (pan/zoom/resize), call `canvas_redraw_for_view()` so the cached RTs reflect the new transform.
+After any view change (pan/zoom/resize), call `canvas_redraw_for_view()` to re-render the paper; layer caches detect the new view themselves.
 
 ## Ref images
 

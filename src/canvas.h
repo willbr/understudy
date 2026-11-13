@@ -42,13 +42,25 @@ typedef struct {
     RenderTexture2D cache_rt;
     int      cache_w;        // 0 = unallocated
     int      cache_h;
-    bool     cache_dirty;
+    bool     cache_dirty;    // committed strokes changed; must re-rasterize
+    float    cache_vx, cache_vy, cache_zoom;  // view the cache was rasterized at
+    float    seen_vx, seen_vy, seen_zoom;     // view at the previous draw (detects pan/zoom in progress)
+    double   move_time;      // GetTime() when the view last changed
+    double   cache_time;     // GetTime() of the last rasterization
+    double   cache_cost;     // seconds the last rasterization took
 } Layer;
 
 typedef struct Canvas {
     RenderTexture2D rt;
     RenderTexture2D strokes_rt;    // strokes-only render (for ink shader compositing)
-    RenderTexture2D committed_rt;  // cached committed strokes (avoids full re-render per frame)
+    // Incremental render of the in-progress stroke: active layer's cache plus
+    // the first live_segs segments of `current`. Lets each frame draw only the
+    // new part of the stroke instead of all of it.
+    RenderTexture2D live_rt;
+    int     live_w, live_h;      // 0 = unallocated
+    bool    live_valid;
+    int     live_layer;          // layer index live_rt was built for
+    int     live_segs;           // segments of `current` already in live_rt
     RenderTexture2D minimap_rt;    // thumbnail of full document at MINIMAP_SIZE scale
     Texture2D       paper_tex;   // fallback paper texture (used for minimap)
     RenderTexture2D paper_rt;     // paper rendered at current view transform
@@ -73,7 +85,7 @@ void canvas_free(Canvas *c);
 
 // Stroke lifecycle — call add_point every frame while mouse is held
 void canvas_begin_stroke(Canvas *c, Color color, int radius, ToolType tool);
-void canvas_add_point(Canvas *c, Vector2 p);   // renders segment to RT
+void canvas_add_point(Canvas *c, Vector2 p);   // records a sample; drawn by canvas_draw_layer
 void canvas_end_stroke(Canvas *c);
 void canvas_undo(Canvas *c);
 void canvas_clear(Canvas *c);
@@ -90,7 +102,7 @@ void canvas_crop(Canvas *c, int x, int y, int w, int h);
 // Resize the document, scaling all strokes proportionally
 void canvas_resize_doc(Canvas *c, int new_w, int new_h);
 
-// Re-render all strokes at the current zoom/pan — call after any view change
+// Refresh view-dependent render targets — call after any view change
 void canvas_redraw_for_view(Canvas *c);
 
 // Update the minimap thumbnail — call after pan offsets change

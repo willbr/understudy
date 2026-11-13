@@ -77,6 +77,12 @@ static void layer_init(Layer *l, const char *name) {
     l->opacity = 1.0f;
 }
 
+// Layer-cache refresh policy while the view is moving (see canvas_draw_layer).
+#define LAYER_CHEAP_RASTER_S       0.0015  // layers cheaper than this re-rasterize every frame
+#define LAYER_SETTLE_S             0.08    // view unchanged this long = at rest
+#define LAYER_REFRESH_MIN_S        0.12   // otherwise refresh at most this often...
+#define LAYER_REFRESH_COST_FACTOR  10.0    // ...and spend at most ~1/10 of the time on it
+
 static void invalidate_all_layer_caches(Canvas *c) {
     for (int i = 0; i < c->layer_count; i++)
         c->layers[i].cache_dirty = true;
@@ -106,8 +112,39 @@ static Vector2 catmull_rom(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, float
     };
 }
 
-void render_stroke_transformed(const Stroke *s,
-                               float vx, float vy, float zoom) {
+// Filled circle stamp — the inner loop of all stroke rendering. Same fan
+// layout as raylib's DrawCircleV (36 steps) but with a precomputed table
+// instead of per-vertex trig, and fewer steps for small radii where the
+// polygon is within ~0.2 px of a true circle anyway.
+static void stamp_circle(Vector2 center, float r, Color color) {
+    static float tc[37], ts[37];
+    static bool  ready = false;
+    if (!ready) {
+        for (int i = 0; i <= 36; i++) {
+            tc[i] = cosf(DEG2RAD * 10.0f * (float)i);
+            ts[i] = sinf(DEG2RAD * 10.0f * (float)i);
+        }
+        ready = true;
+    }
+    int stride = r <= 1.5f ? 6 : r <= 6.0f ? 3 : r <= 14.0f ? 2 : 1;
+
+    rlBegin(RL_TRIANGLES);
+    rlColor4ub(color.r, color.g, color.b, color.a);
+    for (int i = 0; i < 36; i += stride) {
+        rlVertex2f(center.x, center.y);
+        rlVertex2f(center.x + tc[i + stride] * r, center.y + ts[i + stride] * r);
+        rlVertex2f(center.x + tc[i] * r,          center.y + ts[i] * r);
+    }
+    rlEnd();
+}
+
+// Render segments [seg_from, seg_to) of a stroke (segment i joins point i to
+// point i+1). Strokes too short for the spline path (1–2 points, line tool)
+// ignore the range and draw whole. When clip_w/clip_h are > 0, spline segments
+// that fall entirely outside that target rectangle are skipped.
+static void render_stroke_range(const Stroke *s, float vx, float vy, float zoom,
+                                int seg_from, int seg_to,
+                                float clip_w, float clip_h) {
     if (s->count == 0) return;
 
     // Eraser: overwrite with transparent to punch holes (reveals paper)
@@ -125,7 +162,7 @@ void render_stroke_transformed(const Stroke *s,
     if (s->count == 1) {
         float sx0 = s->points[0].x * zoom + vx;
         float sy0 = s->points[0].y * zoom + vy;
-        DrawCircleV((Vector2){sx0, sy0}, base_r * 0.5f, color);
+        stamp_circle((Vector2){sx0, sy0}, base_r * 0.5f, color);
         goto done;
     }
 
@@ -141,7 +178,7 @@ void render_stroke_transformed(const Stroke *s,
         int steps = (int)(dist / step) + 1;
         for (int j = 0; j <= steps; j++) {
             float t = (float)j / (float)steps;
-            DrawCircleV((Vector2){fsx + dx*t, fsy + dy*t}, base_r, color);
+            stamp_circle((Vector2){fsx + dx*t, fsy + dy*t}, base_r, color);
         }
         goto done;
     }
@@ -159,13 +196,15 @@ void render_stroke_transformed(const Stroke *s,
         int steps = (int)(dist / step) + 1;
         for (int j = 0; j <= steps; j++) {
             float t = (float)j / (float)steps;
-            DrawCircleV((Vector2){fsx + dx*t, fsy + dy*t}, r, color);
+            stamp_circle((Vector2){fsx + dx*t, fsy + dy*t}, r, color);
         }
         goto done;
     }
 
     // 3+ points: Catmull-Rom spline for smooth curves
-    for (int i = 0; i < s->count - 1; i++) {
+    if (seg_from < 0) seg_from = 0;
+    if (seg_to > s->count - 1) seg_to = s->count - 1;
+    for (int i = seg_from; i < seg_to; i++) {
         // Get 4 control points (clamp at boundaries)
         int i0 = (i > 0) ? i - 1 : 0;
         int i1 = i;
@@ -192,6 +231,20 @@ void render_stroke_transformed(const Stroke *s,
         float taper = fminf(start_taper, end_taper);
         r *= (0.4f + 0.6f * taper);
 
+        // Cull: the curve between p1 and p2 lies inside the hull of its
+        // Bezier control points, so their bounding box (padded by r) is a
+        // safe bound on everything this segment can touch.
+        if (clip_w > 0.0f && clip_h > 0.0f) {
+            float b1x = p1.x + (p2.x - p0.x) / 6.0f, b1y = p1.y + (p2.y - p0.y) / 6.0f;
+            float b2x = p2.x - (p3.x - p1.x) / 6.0f, b2y = p2.y - (p3.y - p1.y) / 6.0f;
+            float minx = fminf(fminf(p1.x, p2.x), fminf(b1x, b2x)) - r;
+            float maxx = fmaxf(fmaxf(p1.x, p2.x), fmaxf(b1x, b2x)) + r;
+            float miny = fminf(fminf(p1.y, p2.y), fminf(b1y, b2y)) - r;
+            float maxy = fmaxf(fmaxf(p1.y, p2.y), fmaxf(b1y, b2y)) + r;
+            if (maxx < 0.0f || minx > clip_w || maxy < 0.0f || miny > clip_h)
+                continue;
+        }
+
         // Interpolate along spline
         float step = fmaxf(0.5f, r * 0.25f);
         int steps = (int)(dist / step) + 1;
@@ -199,7 +252,7 @@ void render_stroke_transformed(const Stroke *s,
         for (int j = 0; j <= steps; j++) {
             float t = (float)j / (float)steps;
             Vector2 pt = catmull_rom(p0, p1, p2, p3, t);
-            DrawCircleV(pt, r, color);
+            stamp_circle(pt, r, color);
         }
     }
 
@@ -208,6 +261,27 @@ done:
         rlDrawRenderBatchActive();
         rlSetBlendMode(RL_BLEND_ALPHA);
     }
+}
+
+void render_stroke_transformed(const Stroke *s,
+                               float vx, float vy, float zoom) {
+    render_stroke_range(s, vx, vy, zoom, 0, s->count - 1, 0.0f, 0.0f);
+}
+
+// Exact copy of one render texture into another of the same size (no blending,
+// so alpha is preserved as-is).
+static void copy_rt(RenderTexture2D dst, RenderTexture2D src) {
+    float w = (float)src.texture.width, h = (float)src.texture.height;
+    BeginTextureMode(dst);
+    ClearBackground(BLANK);
+    rlDrawRenderBatchActive();
+    rlSetBlendFactors(0x1, 0x0, 0x8006); // GL_ONE, GL_ZERO, GL_FUNC_ADD
+    rlSetBlendMode(RL_BLEND_CUSTOM);
+    DrawTexturePro(src.texture, (Rectangle){0, 0, w, -h}, (Rectangle){0, 0, w, h},
+                   (Vector2){0, 0}, 0.0f, WHITE);
+    rlDrawRenderBatchActive();
+    rlSetBlendMode(RL_BLEND_ALPHA);
+    EndTextureMode();
 }
 
 static void render_paper(Canvas *c) {
@@ -244,7 +318,6 @@ static void render_paper(Canvas *c) {
     EndTextureMode();
 }
 
-// Full re-render of all visible layers at the current view transform.
 // Composite strokes_rt into rt using the ink shader
 void composite_ink(Canvas *c) {
     int pw = c->rt.texture.width;
@@ -274,58 +347,10 @@ void composite_ink(Canvas *c) {
     EndTextureMode();
 }
 
-static void redraw_committed(Canvas *c) {
-    int pw = c->committed_rt.texture.width;
-    int ph = c->committed_rt.texture.height;
-
-    // Clear the final composite
-    BeginTextureMode(c->committed_rt);
-    ClearBackground(BLANK);
-    EndTextureMode();
-
-    // Render each layer separately so erasers only affect their own layer
-    for (int li = 0; li < c->layer_count; li++) {
-        if (!c->layers[li].visible) continue;
-        Layer *l = &c->layers[li];
-        if (l->stroke_count == 0) continue;
-
-        // Render this layer's strokes to strokes_rt (used as scratch)
-        float pvx = c->view_x + l->pan_x * c->zoom;
-        float pvy = c->view_y + l->pan_y * c->zoom;
-        BeginTextureMode(c->strokes_rt);
-        ClearBackground(BLANK);
-        for (int si = 0; si < l->stroke_count; si++)
-            render_stroke_transformed(&l->strokes[si], pvx, pvy, c->zoom);
-        EndTextureMode();
-
-        // Composite this layer onto committed_rt with alpha blending
-        // Erased holes (alpha=0) let lower layers show through
-        BeginTextureMode(c->committed_rt);
-        Rectangle src  = {0, 0, (float)pw, -(float)ph};
-        Rectangle dest = {0, 0, (float)pw, (float)ph};
-        DrawTexturePro(c->strokes_rt.texture, src, dest,
-                       (Vector2){0, 0}, 0.0f, WHITE);
-        EndTextureMode();
-    }
-}
-
-static void redraw_all(Canvas *c) {
-    int pw = c->strokes_rt.texture.width;
-    int ph = c->strokes_rt.texture.height;
-
-    // Rebuild committed strokes cache (per-layer compositing)
-    redraw_committed(c);
-
-    // Copy committed_rt to strokes_rt for the ink shader
-    BeginTextureMode(c->strokes_rt);
-    ClearBackground(BLANK);
-    Rectangle src  = {0, 0, (float)pw, -(float)ph};
-    Rectangle dest = {0, 0, (float)pw, (float)ph};
-    DrawTexturePro(c->committed_rt.texture, src, dest,
-                   (Vector2){0, 0}, 0.0f, WHITE);
-    EndTextureMode();
-
-    composite_ink(c);
+// Drop the in-progress stroke's incremental render (see canvas_draw_layer).
+static void live_invalidate(Canvas *c) {
+    c->live_valid = false;
+    c->live_segs  = 0;
 }
 
 static void update_minimap(Canvas *c) {
@@ -373,9 +398,11 @@ void canvas_init(Canvas *c) {
 
     c->rt           = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
     c->strokes_rt   = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
-    c->committed_rt = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
     c->paper_rt     = LoadRenderTexture(CANVAS_WIDTH, CANVAS_HEIGHT);
     c->minimap_rt   = LoadRenderTexture(MINIMAP_SIZE, MINIMAP_SIZE);
+    c->live_w = c->live_h = 0;   // live_rt is allocated on first use
+    c->live_layer = -1;
+    live_invalidate(c);
 
     memset(c->layers, 0, sizeof(c->layers));
     c->layer_count  = 1;
@@ -389,7 +416,6 @@ void canvas_init(Canvas *c) {
     c->dirty      = false;
 
     reset_view(c);
-    redraw_all(c);
     render_paper(c);
     update_minimap(c);
 }
@@ -400,9 +426,9 @@ void canvas_free(Canvas *c) {
     UnloadTexture(c->paper_tex);
     UnloadRenderTexture(c->minimap_rt);
     UnloadRenderTexture(c->paper_rt);
-    UnloadRenderTexture(c->committed_rt);
     UnloadRenderTexture(c->strokes_rt);
     UnloadRenderTexture(c->rt);
+    if (c->live_w > 0) UnloadRenderTexture(c->live_rt);
     for (int i = 0; i < c->layer_count; i++)
         layer_free(&c->layers[i]);
     stroke_free_data(&c->current);
@@ -410,6 +436,7 @@ void canvas_free(Canvas *c) {
 
 void canvas_begin_stroke(Canvas *c, Color color, int radius, ToolType tool) {
     stroke_free_data(&c->current);
+    live_invalidate(c);
     c->current.color  = color;
     c->current.radius = radius;
     c->current.tool   = tool;
@@ -435,7 +462,7 @@ void canvas_add_point(Canvas *c, Vector2 p) {
     s->points[s->count++] = p;
     c->dirty = true;
     // No rendering here — canvas_draw_layer handles the live preview each
-    // frame by blitting the active layer's cache and overlaying c->current.
+    // frame, rendering only the segments added since the previous frame.
 }
 
 void canvas_end_stroke(Canvas *c) {
@@ -452,10 +479,8 @@ void canvas_end_stroke(Canvas *c) {
         l->strokes         = tmp;
         l->stroke_capacity = newcap;
     }
-    // Fast path: if the new stroke is additive (not eraser) and the active
-    // layer is the topmost visible layer, then strokes_rt already holds the
-    // correct composite (committed + this stroke drawn on top). Promote it
-    // to committed_rt instead of replaying every stroke in every layer.
+    // Minimap fast path: an additive (non-eraser) stroke on the topmost
+    // visible layer can simply be stamped on top of the existing thumbnail.
     bool brush_fast_path = c->current.tool != TOOL_ERASER;
     if (brush_fast_path) {
         for (int li = c->active_layer + 1; li < c->layer_count; li++) {
@@ -466,31 +491,48 @@ void canvas_end_stroke(Canvas *c) {
     l->strokes[l->stroke_count++] = c->current;
     memset(&c->current, 0, sizeof(c->current));
     c->is_drawing = false;
-    l->cache_dirty = true;
+    Stroke *s = &l->strokes[l->stroke_count - 1];
+
+    // Fold the new stroke into the layer's raster cache instead of marking the
+    // cache dirty (which would re-rasterize every stroke in the layer). Strokes
+    // render in order, so "cache + new stroke on top" is exactly what a full
+    // re-rasterization would produce. Only valid if the cache is current.
+    int   pw  = c->strokes_rt.texture.width;
+    int   ph  = c->strokes_rt.texture.height;
+    float pvx = c->view_x + l->pan_x * c->zoom;
+    float pvy = c->view_y + l->pan_y * c->zoom;
+    bool cache_fresh = l->cache_w == pw && l->cache_h == ph && !l->cache_dirty &&
+                       l->cache_vx == pvx && l->cache_vy == pvy &&
+                       l->cache_zoom == c->zoom;
+    if (!cache_fresh) {
+        l->cache_dirty = true;
+    } else if (c->live_valid && c->live_layer == c->active_layer &&
+               c->live_w == pw && c->live_h == ph) {
+        // live_rt already holds cache + the settled part of this stroke:
+        // finish the tail there and swap it in as the new cache.
+        BeginTextureMode(c->live_rt);
+        render_stroke_range(s, pvx, pvy, c->zoom, c->live_segs, s->count - 1,
+                            (float)pw, (float)ph);
+        EndTextureMode();
+        RenderTexture2D tmp = l->cache_rt;
+        l->cache_rt = c->live_rt;
+        c->live_rt  = tmp;
+    } else {
+        BeginTextureMode(l->cache_rt);
+        render_stroke_range(s, pvx, pvy, c->zoom, 0, s->count - 1,
+                            (float)pw, (float)ph);
+        EndTextureMode();
+    }
+    live_invalidate(c);
 
     if (brush_fast_path) {
-        // strokes_rt already holds committed + just-drawn stroke.
-        // Promote it to the new committed cache instead of replaying every
-        // stroke in every layer.
-        int pw = c->strokes_rt.texture.width;
-        int ph = c->strokes_rt.texture.height;
-        Rectangle src  = {0, 0, (float)pw, -(float)ph};
-        Rectangle dest = {0, 0, (float)pw, (float)ph};
-        BeginTextureMode(c->committed_rt);
-        ClearBackground(BLANK);
-        DrawTexturePro(c->strokes_rt.texture, src, dest,
-                       (Vector2){0, 0}, 0.0f, WHITE);
-        EndTextureMode();
-        composite_ink(c);
         // Stamp only the new stroke onto the minimap.
         int max_dim = c->width > c->height ? c->width : c->height;
         float ms = (float)MINIMAP_SIZE / (float)max_dim;
-        Stroke *s = &l->strokes[l->stroke_count - 1];
         BeginTextureMode(c->minimap_rt);
         render_stroke_transformed(s, l->pan_x * ms, l->pan_y * ms, ms);
         EndTextureMode();
     } else {
-        redraw_all(c);      // eraser / non-top layer: need layered compositing
         update_minimap(c);
     }
 }
@@ -499,7 +541,6 @@ void canvas_undo(Canvas *c) {
     if (c->is_drawing) {
         stroke_free_data(&c->current);
         c->is_drawing = false;
-        redraw_all(c);
         update_minimap(c);
         return;
     }
@@ -507,7 +548,6 @@ void canvas_undo(Canvas *c) {
     if (l->stroke_count == 0) return;
     stroke_free_data(&l->strokes[--l->stroke_count]);
     l->cache_dirty = true;
-    redraw_all(c);
     update_minimap(c);
     c->dirty = (total_strokes(c) > 0);
 }
@@ -516,6 +556,7 @@ void canvas_clear(Canvas *c) {
     for (int i = 0; i < c->layer_count; i++)
         layer_free(&c->layers[i]);
     c->layer_count  = 1;
+    live_invalidate(c);
     c->active_layer = 0;
     c->next_z       = 0.0f;
     layer_init(&c->layers[0], "Background");
@@ -526,7 +567,6 @@ void canvas_clear(Canvas *c) {
     c->dirty      = false;
 
     reset_view(c);
-    redraw_all(c);
     update_minimap(c);
 }
 
@@ -541,6 +581,7 @@ void canvas_load_layers(Canvas *c, Layer *layers, int layer_count) {
     for (int i = 0; i < count; i++)
         c->layers[i] = layers[i];
     c->layer_count  = count;
+    live_invalidate(c);
     c->active_layer = 0;
     c->dirty        = false;
 
@@ -554,7 +595,6 @@ void canvas_load_layers(Canvas *c, Layer *layers, int layer_count) {
     c->next_z = max_z + 1.0f;
 
     reset_view(c);
-    redraw_all(c);
     update_minimap(c);
 }
 
@@ -682,7 +722,6 @@ void canvas_crop(Canvas *c, int x, int y, int w, int h) {
     c->dirty  = true;
     invalidate_all_layer_caches(c);
     reset_view(c);
-    redraw_all(c);
     update_minimap(c);
 }
 
@@ -714,13 +753,13 @@ void canvas_resize_doc(Canvas *c, int new_w, int new_h) {
     c->dirty  = true;
     invalidate_all_layer_caches(c);
     reset_view(c);
-    redraw_all(c);
     update_minimap(c);
 }
 
 void canvas_redraw_for_view(Canvas *c) {
-    invalidate_all_layer_caches(c);
-    redraw_all(c);
+    // Layer caches are keyed on the view they were rasterized at, so
+    // canvas_draw_layer notices the change itself and decides whether to
+    // re-rasterize now or reuse the stale cache while the view is moving.
     render_paper(c);
 }
 
@@ -731,14 +770,11 @@ void canvas_update_minimap(Canvas *c) {
 void canvas_resize(Canvas *c, int panel_w, int panel_h) {
     UnloadRenderTexture(c->rt);
     UnloadRenderTexture(c->strokes_rt);
-    UnloadRenderTexture(c->committed_rt);
     UnloadRenderTexture(c->paper_rt);
     drop_all_layer_caches(c);
     c->rt           = LoadRenderTexture(panel_w, panel_h);
     c->strokes_rt   = LoadRenderTexture(panel_w, panel_h);
-    c->committed_rt = LoadRenderTexture(panel_w, panel_h);
     c->paper_rt     = LoadRenderTexture(panel_w, panel_h);
-    redraw_all(c);
     render_paper(c);
 }
 
@@ -819,6 +855,7 @@ int canvas_add_layer(Canvas *c) {
     memmove(&c->layers[idx + 1], &c->layers[idx],
             (c->layer_count - idx) * sizeof(Layer));
     c->layer_count++;
+    live_invalidate(c);
 
     char name[LAYER_NAME_LEN];
     snprintf(name, sizeof(name), "Layer %d", c->layer_count);
@@ -838,6 +875,7 @@ void canvas_delete_layer(Canvas *c, int idx) {
     memmove(&c->layers[idx], &c->layers[idx + 1],
             (c->layer_count - idx - 1) * sizeof(Layer));
     c->layer_count--;
+    live_invalidate(c);
 
     if (c->active_layer >= c->layer_count)
         c->active_layer = c->layer_count - 1;
@@ -845,7 +883,6 @@ void canvas_delete_layer(Canvas *c, int idx) {
         c->active_layer--;
 
     c->dirty = true;
-    redraw_all(c);
     update_minimap(c);
 }
 
@@ -857,7 +894,6 @@ void canvas_set_active_layer(Canvas *c, int idx) {
 void canvas_toggle_layer_visible(Canvas *c, int idx) {
     if (idx < 0 || idx >= c->layer_count) return;
     c->layers[idx].visible = !c->layers[idx].visible;
-    redraw_all(c);
     update_minimap(c);
 }
 
@@ -880,13 +916,13 @@ void canvas_move_layer(Canvas *c, int from, int to) {
                 (from - to) * sizeof(Layer));
     }
     c->layers[to] = tmp;
+    live_invalidate(c);
 
     // Track active layer
     if (c->active_layer == from)
         c->active_layer = to;
 
     c->dirty = true;
-    redraw_all(c);
     update_minimap(c);
 }
 
@@ -913,30 +949,114 @@ void canvas_draw_layer(Canvas *c, int li, int x_offset) {
     if (l->cache_w != pw || l->cache_h != ph) {
         if (l->cache_w > 0) UnloadRenderTexture(l->cache_rt);
         l->cache_rt = LoadRenderTexture(pw, ph);
+        // Bilinear so the cache scales smoothly when reused mid-zoom; a 1:1
+        // blit samples texel centres and is unaffected.
+        SetTextureFilter(l->cache_rt.texture, TEXTURE_FILTER_BILINEAR);
         l->cache_w = pw;
         l->cache_h = ph;
         l->cache_dirty = true;
     }
 
-    // Repopulate the cache only when the layer's committed strokes changed.
-    if (l->cache_dirty) {
+    // The cache is a raster of the layer at one particular view. `stale` = it
+    // was rasterized at a different view than the current one; `moving` = the
+    // view changed since this layer was last drawn (pan/zoom in progress).
+    bool stale  = l->cache_vx != pvx || l->cache_vy != pvy || l->cache_zoom != c->zoom;
+    // "At rest" needs a short quiet period, not just one unchanged frame: mouse
+    // reports arrive slower than frames, so mid-drag frames often see no delta.
+    double now = GetTime();
+    if (l->seen_vx != pvx || l->seen_vy != pvy || l->seen_zoom != c->zoom)
+        l->move_time = now;
+    l->seen_vx = pvx; l->seen_vy = pvy; l->seen_zoom = c->zoom;
+    bool moving = (now - l->move_time) < LAYER_SETTLE_S;
+
+    // Re-rasterizing costs time proportional to the layer's stroke count, so
+    // doing it on every frame of a pan or zoom tanks the frame rate. Content
+    // changes (cache_dirty) always re-rasterize. For view changes: cheap
+    // layers re-rasterize every frame as before; expensive ones reuse the
+    // stale cache (translated/scaled below) while the view is moving, refresh
+    // occasionally, and re-rasterize as soon as the view comes to rest.
+    bool rasterize = l->cache_dirty;
+    if (!rasterize && stale) {
+        double age     = now - l->cache_time;
+        double refresh = l->cache_cost * LAYER_REFRESH_COST_FACTOR;
+        if (refresh < LAYER_REFRESH_MIN_S) refresh = LAYER_REFRESH_MIN_S;
+        rasterize = !moving || active_with_inprogress ||
+                    l->cache_cost < LAYER_CHEAP_RASTER_S || age > refresh;
+    }
+    if (rasterize) {
+        double t0 = GetTime();
         BeginTextureMode(l->cache_rt);
         ClearBackground(BLANK);
         for (int si = 0; si < l->stroke_count; si++)
-            render_stroke_transformed(&l->strokes[si], pvx, pvy, c->zoom);
+            render_stroke_range(&l->strokes[si], pvx, pvy, c->zoom,
+                                0, l->strokes[si].count - 1, (float)pw, (float)ph);
         EndTextureMode();
         l->cache_dirty = false;
+        l->cache_vx = pvx; l->cache_vy = pvy; l->cache_zoom = c->zoom;
+        l->cache_time = GetTime();
+        l->cache_cost = l->cache_time - t0;
+        stale = false;
+        if (c->live_layer == li) live_invalidate(c);  // was built on the old cache
     }
 
-    // Blit cache into strokes_rt, overlay the in-progress stroke.
+    // In-progress freehand stroke: instead of re-rendering the whole stroke
+    // every frame (cost grows with stroke length), keep live_rt = cache + the
+    // "settled" part of the stroke, and add only newly settled segments each
+    // frame. A segment is settled once 3 more points follow it: from then on
+    // neither its spline control points nor its end taper can change. Only the
+    // short unsettled tail is redrawn per frame.
+    bool use_live = active_with_inprogress && c->current.tool != TOOL_LINE &&
+                    c->current.count >= 3;
+    int settled = 0;
+    if (use_live) {
+        if (c->live_w != pw || c->live_h != ph) {
+            if (c->live_w > 0) UnloadRenderTexture(c->live_rt);
+            c->live_rt = LoadRenderTexture(pw, ph);
+            SetTextureFilter(c->live_rt.texture, TEXTURE_FILTER_BILINEAR);  // may be swapped in as a cache
+            c->live_w = pw;
+            c->live_h = ph;
+            live_invalidate(c);
+        }
+        if (!c->live_valid || c->live_layer != li) {
+            copy_rt(c->live_rt, l->cache_rt);
+            c->live_valid = true;
+            c->live_layer = li;
+            c->live_segs  = 0;
+        }
+        settled = c->current.count - 3;
+        if (settled > c->live_segs) {
+            BeginTextureMode(c->live_rt);
+            render_stroke_range(&c->current, pvx, pvy, c->zoom,
+                                c->live_segs, settled, (float)pw, (float)ph);
+            EndTextureMode();
+            c->live_segs = settled;
+        }
+    }
+
+    // Build this layer's strokes_rt: cache (or live) + whatever is still in flux.
     BeginTextureMode(c->strokes_rt);
     ClearBackground(BLANK);
-    Rectangle cache_src  = {0, 0, (float)pw, -(float)ph};
-    Rectangle cache_dest = {0, 0, (float)pw, (float)ph};
-    DrawTexturePro(l->cache_rt.texture, cache_src, cache_dest,
-                   (Vector2){0, 0}, 0.0f, WHITE);
-    if (active_with_inprogress)
-        render_stroke_transformed(&c->current, pvx, pvy, c->zoom);
+    Rectangle cache_src = {0, 0, (float)pw, -(float)ph};
+    if (use_live) {
+        DrawTexturePro(c->live_rt.texture, cache_src,
+                       (Rectangle){0, 0, (float)pw, (float)ph},
+                       (Vector2){0, 0}, 0.0f, WHITE);
+        render_stroke_range(&c->current, pvx, pvy, c->zoom,
+                            settled, c->current.count - 1, (float)pw, (float)ph);
+    } else {
+        // Map the cache from the view it was rasterized at to the current one
+        // (identity when the cache is fresh).
+        Rectangle cache_dest = {0, 0, (float)pw, (float)ph};
+        if (stale) {
+            float s = c->zoom / l->cache_zoom;
+            cache_dest = (Rectangle){pvx - l->cache_vx * s, pvy - l->cache_vy * s,
+                                     (float)pw * s, (float)ph * s};
+        }
+        DrawTexturePro(l->cache_rt.texture, cache_src, cache_dest,
+                       (Vector2){0, 0}, 0.0f, WHITE);
+        if (active_with_inprogress)
+            render_stroke_transformed(&c->current, pvx, pvy, c->zoom);
+    }
     EndTextureMode();
 
     // Apply ink shader → rt
