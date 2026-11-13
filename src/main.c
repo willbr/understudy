@@ -499,13 +499,13 @@ int main(void) {
                 SetMouseCursor(IsMouseButtonDown(MOUSE_BUTTON_LEFT)
                                ? MOUSE_CURSOR_RESIZE_ALL
                                : MOUSE_CURSOR_POINTING_HAND);
-                minimap_t = 0.3f;  // keep refreshing while space held
+                minimap_t = 1.3f;  // fully opaque while space is held; fades after release
                 if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
                     Vector2 delta = GetMouseDelta();
                     app.canvas.view_x += delta.x;
                     app.canvas.view_y += delta.y;
                     canvas_redraw_for_view(&app.canvas);
-                    minimap_t = 0.3f;
+                    minimap_t = 1.3f;
                 }
                 // Cancel any stroke that was in progress when Space was pressed
                 if (app.canvas.is_drawing)
@@ -659,7 +659,7 @@ int main(void) {
                             al->pan_y = pan_start_y + (cpos.y - pan_start_cpos.y);
                             app.canvas.dirty = true;
                             canvas_redraw_for_view(&app.canvas);
-                            minimap_t = 0.3f;
+                            minimap_t = 1.3f;
                         }
                         if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
                             panning_layer = false;
