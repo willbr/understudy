@@ -5,7 +5,13 @@ const RAYLIB_URL = "https://github.com/raysan5/raylib/archive/refs/tags/5.5.tar.
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
+    // Default to an optimized build: stroke rasterization is several times
+    // slower in Debug. Use -Doptimize=Debug when debugging.
+    const optimize = b.option(
+        std.builtin.OptimizeMode,
+        "optimize",
+        "Optimization mode (default: ReleaseFast)",
+    ) orelse .ReleaseFast;
 
     const os_tag = target.result.os.tag;
     const is_windows = os_tag == .windows;
