@@ -80,8 +80,9 @@ static void layer_init(Layer *l, const char *name) {
 // Layer-cache refresh policy while the view is moving (see canvas_draw_layer).
 #define LAYER_CHEAP_RASTER_S       0.0015  // layers cheaper than this re-rasterize every frame
 #define LAYER_SETTLE_S             0.08    // view unchanged this long = at rest
-#define LAYER_REFRESH_MIN_S        0.12   // otherwise refresh at most this often...
-#define LAYER_REFRESH_COST_FACTOR  10.0    // ...and spend at most ~1/10 of the time on it
+#define JOB_BUDGET_S               0.002   // background rasterization time per frame
+#define JOB_SEG_CHUNK              16      // stroke segments rendered between budget checks
+#define JOB_ABANDON_S              0.25    // job not advanced this long = its layer is no longer drawn
 
 static void invalidate_all_layer_caches(Canvas *c) {
     for (int i = 0; i < c->layer_count; i++)
@@ -347,10 +348,74 @@ void composite_ink(Canvas *c) {
     EndTextureMode();
 }
 
+// ── Background re-rasterization job ──────────────────────────────────────────
+// One layer at a time is re-rasterized into job_rt in small time slices (see
+// canvas_draw_layer), so a view change never costs a whole rasterization in a
+// single frame.
+
+static void job_cancel(Canvas *c) {
+    c->job_active = false;
+}
+
+// Which layer should get the job next: the visible, expensive layer whose
+// cache is out of date for the current view and has been so the longest.
+static int job_candidate(const Canvas *c) {
+    int pw = c->strokes_rt.texture.width, ph = c->strokes_rt.texture.height;
+    int best = -1;
+    for (int i = 0; i < c->layer_count; i++) {
+        const Layer *l = &c->layers[i];
+        if (!l->visible || l->stroke_count == 0 || l->cache_dirty) continue;
+        if (l->cache_w != pw || l->cache_h != ph) continue;
+        if (l->cache_cost < LAYER_CHEAP_RASTER_S) continue;
+        float pvx = c->view_x + l->pan_x * c->zoom;
+        float pvy = c->view_y + l->pan_y * c->zoom;
+        if (l->cache_vx == pvx && l->cache_vy == pvy && l->cache_zoom == c->zoom) continue;
+        if (best < 0 || l->cache_time < c->layers[best].cache_time) best = i;
+    }
+    return best;
+}
+
+// Spend up to JOB_BUDGET_S rendering the next strokes of the job's layer into
+// job_rt. Returns true when the layer is fully rendered.
+static bool job_advance(Canvas *c, Layer *l, float clip_w, float clip_h) {
+    double t0 = GetTime();
+    BeginTextureMode(c->job_rt);
+    if (!c->job_started) {
+        ClearBackground(BLANK);
+        c->job_started = true;
+    }
+    while (c->job_stroke < l->stroke_count) {
+        const Stroke *s = &l->strokes[c->job_stroke];
+        int nseg = s->count - 1;
+        if (s->count < 3) {
+            // Short strokes ignore the segment range and draw whole.
+            render_stroke_range(s, c->job_vx, c->job_vy, c->job_zoom, 0, nseg, clip_w, clip_h);
+            c->job_seg = nseg;
+        } else {
+            int to = c->job_seg + JOB_SEG_CHUNK;
+            if (to > nseg) to = nseg;
+            render_stroke_range(s, c->job_vx, c->job_vy, c->job_zoom, c->job_seg, to, clip_w, clip_h);
+            c->job_seg = to;
+        }
+        if (c->job_seg >= nseg) {
+            c->job_stroke++;
+            c->job_seg = 0;
+        }
+        if (GetTime() - t0 > JOB_BUDGET_S) break;
+    }
+    EndTextureMode();
+    c->job_touch  = GetTime();
+    c->job_spent += c->job_touch - t0;
+    return c->job_stroke >= l->stroke_count;
+}
+
 // Drop the in-progress stroke's incremental render (see canvas_draw_layer).
+// Called whenever layer contents or the layer list change, so it also stops
+// any background job, which would otherwise be rendering outdated content.
 static void live_invalidate(Canvas *c) {
     c->live_valid = false;
     c->live_segs  = 0;
+    job_cancel(c);
 }
 
 static void update_minimap(Canvas *c) {
@@ -402,6 +467,8 @@ void canvas_init(Canvas *c) {
     c->minimap_rt   = LoadRenderTexture(MINIMAP_SIZE, MINIMAP_SIZE);
     c->live_w = c->live_h = 0;   // live_rt is allocated on first use
     c->live_layer = -1;
+    c->job_w = c->job_h = 0;     // job_rt likewise
+    c->job_layer = -1;
     live_invalidate(c);
 
     memset(c->layers, 0, sizeof(c->layers));
@@ -429,6 +496,7 @@ void canvas_free(Canvas *c) {
     UnloadRenderTexture(c->strokes_rt);
     UnloadRenderTexture(c->rt);
     if (c->live_w > 0) UnloadRenderTexture(c->live_rt);
+    if (c->job_w > 0)  UnloadRenderTexture(c->job_rt);
     for (int i = 0; i < c->layer_count; i++)
         layer_free(&c->layers[i]);
     stroke_free_data(&c->current);
@@ -970,20 +1038,53 @@ void canvas_draw_layer(Canvas *c, int li, int x_offset) {
     bool moving = (now - l->move_time) < LAYER_SETTLE_S;
 
     // Re-rasterizing costs time proportional to the layer's stroke count, so
-    // doing it on every frame of a pan or zoom tanks the frame rate. Content
-    // changes (cache_dirty) always re-rasterize. For view changes: cheap
-    // layers re-rasterize every frame as before; expensive ones reuse the
-    // stale cache (translated/scaled below) while the view is moving, refresh
-    // occasionally, and re-rasterize as soon as the view comes to rest.
-    bool rasterize = l->cache_dirty;
+    // doing it in one go on a pan/zoom frame stalls that frame. Content
+    // changes (cache_dirty) and a stroke in progress need an exact cache now
+    // and rasterize synchronously, as do cheap layers. An expensive layer
+    // whose view changed instead shows its stale cache (translated/scaled
+    // below) while a background job re-rasterizes it a few ms per frame into
+    // job_rt, which is swapped in when complete.
+    bool expensive = l->cache_cost >= LAYER_CHEAP_RASTER_S;
+    bool rasterize = l->cache_dirty ||
+                     (stale && (active_with_inprogress || !expensive));
     if (!rasterize && stale) {
-        double age     = now - l->cache_time;
-        double refresh = l->cache_cost * LAYER_REFRESH_COST_FACTOR;
-        if (refresh < LAYER_REFRESH_MIN_S) refresh = LAYER_REFRESH_MIN_S;
-        rasterize = !moving || active_with_inprogress ||
-                    l->cache_cost < LAYER_CHEAP_RASTER_S || age > refresh;
+        if (c->job_w != pw || c->job_h != ph) {
+            if (c->job_w > 0) UnloadRenderTexture(c->job_rt);
+            c->job_rt = LoadRenderTexture(pw, ph);
+            SetTextureFilter(c->job_rt.texture, TEXTURE_FILTER_BILINEAR);
+            c->job_w = pw;
+            c->job_h = ph;
+            job_cancel(c);
+        }
+        // A job whose layer stopped being drawn (hidden) is abandoned.
+        bool busy = c->job_active && (now - c->job_touch) < JOB_ABANDON_S;
+        bool mine = busy && c->job_layer == li;
+        if (mine && !moving &&
+            (c->job_vx != pvx || c->job_vy != pvy || c->job_zoom != c->zoom))
+            mine = false, busy = false;   // view came to rest elsewhere: retarget
+        if (!busy && job_candidate(c) == li) {
+            c->job_active  = true;
+            c->job_started = false;
+            c->job_layer   = li;
+            c->job_stroke  = 0;
+            c->job_seg     = 0;
+            c->job_vx = pvx; c->job_vy = pvy; c->job_zoom = c->zoom;
+            c->job_spent   = 0.0;
+            mine = true;
+        }
+        if (mine && job_advance(c, l, (float)pw, (float)ph)) {
+            RenderTexture2D tmp = l->cache_rt;
+            l->cache_rt = c->job_rt;
+            c->job_rt   = tmp;
+            l->cache_vx = c->job_vx; l->cache_vy = c->job_vy; l->cache_zoom = c->job_zoom;
+            l->cache_time = GetTime();
+            l->cache_cost = c->job_spent;
+            job_cancel(c);
+            stale = l->cache_vx != pvx || l->cache_vy != pvy || l->cache_zoom != c->zoom;
+        }
     }
     if (rasterize) {
+        if (c->job_layer == li) job_cancel(c);
         double t0 = GetTime();
         BeginTextureMode(l->cache_rt);
         ClearBackground(BLANK);

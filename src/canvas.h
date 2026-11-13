@@ -61,6 +61,17 @@ typedef struct Canvas {
     bool    live_valid;
     int     live_layer;          // layer index live_rt was built for
     int     live_segs;           // segments of `current` already in live_rt
+    // Background re-rasterization of one layer at a new view, a few ms per
+    // frame; swapped in as that layer's cache when complete.
+    RenderTexture2D job_rt;
+    int     job_w, job_h;        // 0 = unallocated
+    bool    job_active;
+    bool    job_started;         // job_rt has been cleared for this job
+    int     job_layer;
+    int     job_stroke, job_seg; // next stroke / segment to render
+    float   job_vx, job_vy, job_zoom;  // view being rasterized
+    double  job_spent;           // seconds of rendering so far
+    double  job_touch;           // GetTime() of the last slice
     RenderTexture2D minimap_rt;    // thumbnail of full document at MINIMAP_SIZE scale
     Texture2D       paper_tex;   // fallback paper texture (used for minimap)
     RenderTexture2D paper_rt;     // paper rendered at current view transform

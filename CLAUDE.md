@@ -66,7 +66,7 @@ main loop
 Strokes are arrays of `Vector2` sample points plus color, radius, tool. Each `Layer` owns its own stroke array and a per-layer `pan_x/pan_y`, `opacity`, `visible`, and `z` (unified z-order shared with ref images).
 
 Render targets:
-- `Layer.cache_rt` — per-layer raster of that layer's committed strokes, tagged with the view it was rasterized at. `canvas_draw_layer()` re-rasterizes it on content change (`cache_dirty`) or once the view comes to rest; while a pan/zoom is in progress an expensive layer's stale cache is translated/scaled instead.
+- `Layer.cache_rt` — per-layer raster of that layer's committed strokes, tagged with the view it was rasterized at. `canvas_draw_layer()` re-rasterizes it synchronously on content change (`cache_dirty`). After a view change, an expensive layer shows its stale cache translated/scaled while a background job re-rasterizes it into `job_rt` a couple of ms per frame, then swaps it in — never a whole rasterization in one frame.
 - `live_rt` — active layer's cache + the settled part of the in-progress stroke, so each frame renders only newly added segments. Swapped in as the layer's cache on stroke end.
 - `strokes_rt` — scratch: one layer's strokes for the current frame, fed to `ink.fs`
 - `paper_rt` — paper texture at the current view (from `paper.fs`)
