@@ -2,6 +2,10 @@
 
 Guidance for Claude Code (claude.ai/code) working in this repo.
 
+## Workflow
+
+Always commit your changes when a piece of work is done — don't leave them uncommitted in the working tree or wait to be asked.
+
 ## Build & Run
 
 ```bash
